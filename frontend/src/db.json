@@ -1,0 +1,36 @@
+{
+  "items": [
+    {
+      "id": 1,
+      "name": "Nike Air Max",
+      "price": 199.99,
+      "image": "/images/nike-air-max.jpg",
+      "description": "Classic Nike Air Max sneakers",
+      "category": "Shoes"
+    },
+    {
+      "id": 2,
+      "name": "Adidas Ultra Boost",
+      "price": 179.99,
+      "image": "/images/adidas-ultra-boost.jpg",
+      "description": "Comfortable running shoes",
+      "category": "Shoes"
+    },
+    {
+      "id": 3,
+      "name": "Puma RS-X",
+      "price": 149.99,
+      "image": "/images/puma-rsx.jpg",
+      "description": "Retro style sneakers",
+      "category": "Shoes"
+    },
+    {
+      "name": "Nume",
+      "price": 234,
+      "image": "/images/puma-rsx.jpg",
+      "description": "123",
+      "category": "LandingPage",
+      "id": 4
+    }
+  ]
+}
