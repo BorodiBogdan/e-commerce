@@ -6,8 +6,12 @@ interface ProductCardProps {
   price: number;
   image: string;
   description: string;
+  category: string;
   onDelete: (id: number) => void;
   onEdit: (id: number) => void;
+  isHighestPrice?: boolean;
+  isLowestPrice?: boolean;
+  isAveragePrice?: boolean;
 }
 
 export default function ProductCard({
@@ -16,11 +20,25 @@ export default function ProductCard({
   price,
   image,
   description,
+  category,
   onDelete,
   onEdit,
+  isHighestPrice,
+  isLowestPrice,
+  isAveragePrice,
 }: ProductCardProps) {
+  // Determine the border color based on price status
+  const getBorderClass = () => {
+    if (isHighestPrice) return "border-green-500 border-2";
+    if (isLowestPrice) return "border-red-500 border-2";
+    if (isAveragePrice) return "border-blue-500 border-2";
+    return "";
+  };
+
   return (
-    <div className="bg-white rounded-lg shadow-md overflow-hidden">
+    <div
+      className={`bg-white rounded-lg shadow-md overflow-hidden ${getBorderClass()}`}
+    >
       <div className="relative h-48 w-full">
         <Image src={image} alt={name} fill className="object-cover" />
         <div className="absolute top-2 right-2 flex gap-2">
@@ -59,9 +77,43 @@ export default function ProductCard({
       <div className="p-4">
         <h3 className="text-lg font-semibold text-gray-800">{name}</h3>
         <p className="text-gray-600 text-sm mt-1">{description}</p>
-        <p className="text-xl font-bold text-blue-600 mt-2">
-          ${price.toFixed(2)}
-        </p>
+        <div className="flex justify-between items-center mt-2">
+          <p
+            className={`text-xl font-bold ${
+              isHighestPrice
+                ? "text-green-600"
+                : isLowestPrice
+                ? "text-red-600"
+                : isAveragePrice
+                ? "text-blue-600"
+                : "text-blue-600"
+            }`}
+          >
+            ${price.toFixed(2)}
+          </p>
+          <span className="text-sm text-gray-500 bg-gray-100 px-2 py-1 rounded">
+            {category}
+          </span>
+        </div>
+        {(isHighestPrice || isLowestPrice || isAveragePrice) && (
+          <div className="mt-2">
+            {isHighestPrice && (
+              <span className="text-xs font-medium bg-green-100 text-green-800 px-2 py-1 rounded">
+                Highest Price
+              </span>
+            )}
+            {isLowestPrice && (
+              <span className="text-xs font-medium bg-red-100 text-red-800 px-2 py-1 rounded">
+                Lowest Price
+              </span>
+            )}
+            {isAveragePrice && (
+              <span className="text-xs font-medium bg-blue-100 text-blue-800 px-2 py-1 rounded">
+                Average Price
+              </span>
+            )}
+          </div>
+        )}
       </div>
     </div>
   );

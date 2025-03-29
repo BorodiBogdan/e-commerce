@@ -1,8 +1,9 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useState, useEffect, useMemo } from "react";
 import ProductCard from "./components/ProductCard";
 import ProductForm from "./components/ProductForm";
+import ProductCharts from "./components/ProductCharts";
 import Toast from "./components/Toast";
 import {
   Product,
@@ -24,9 +25,12 @@ export default function Home() {
   const [toastMessage, setToastMessage] = useState<string>("");
   const [categories, setCategories] = useState<string[]>([]);
   const [showToast, setShowToast] = useState(false);
+  const [currentPage, setCurrentPage] = useState(1);
+  const [isLoading, setIsLoading] = useState(false);
+  const [autoRefresh, setAutoRefresh] = useState(false);
+  const itemsPerPage = 6;
 
   useEffect(() => {
-    // Load products and categories
     loadProducts();
     setCategories(productService.getCategories());
   }, []);
@@ -38,11 +42,68 @@ export default function Home() {
       sortOrder
     );
     setProducts(filteredProducts);
+    setCurrentPage(1);
   };
+
+  useEffect(() => {
+    let intervalId: NodeJS.Timeout;
+
+    if (autoRefresh) {
+      setToastMessage("Auto-refreshing prices...");
+      setShowToast(true);
+
+      setTimeout(() => setShowToast(false), 2000);
+
+      intervalId = setInterval(async () => {
+        setIsLoading(true);
+        await productService.fetchUpdatedPrices();
+        loadProducts();
+        setIsLoading(false);
+      }, 5000);
+    }
+
+    return () => {
+      if (intervalId) clearInterval(intervalId);
+    };
+  }, [autoRefresh]);
 
   useEffect(() => {
     loadProducts();
   }, [filters, sortBy, sortOrder]);
+
+  const statistics = useMemo(() => {
+    if (products.length === 0) return null;
+
+    const prices = products.map((p) => p.price);
+    const maxPrice = Math.max(...prices);
+    const minPrice = Math.min(...prices);
+    const avgPrice =
+      prices.reduce((sum, price) => sum + price, 0) / prices.length;
+
+    return {
+      maxPrice,
+      minPrice,
+      avgPrice,
+      maxPriceProduct: products.find((p) => p.price === maxPrice)?.id,
+      minPriceProduct: products.find((p) => p.price === minPrice)?.id,
+      avgPriceProduct: products.reduce((closest, product) => {
+        return Math.abs(product.price - avgPrice) <
+          Math.abs(closest.price - avgPrice)
+          ? product
+          : closest;
+      }, products[0]).id,
+    };
+  }, [products]);
+
+  const paginatedProducts = useMemo(() => {
+    const startIndex = (currentPage - 1) * itemsPerPage;
+    return products.slice(startIndex, startIndex + itemsPerPage);
+  }, [products, currentPage, itemsPerPage]);
+
+  const totalPages = useMemo(
+    () => Math.ceil(products.length / itemsPerPage),
+    [products, itemsPerPage]
+  );
 
   const handleAddProduct = (product: Omit<Product, "id">) => {
     const result = productService.addProduct(product);
@@ -54,7 +115,8 @@ export default function Home() {
     setCategories(productService.getCategories());
     setShowForm(false);
     setShowToast(true);
-    setToastMessage("Items successfully added!");
+    setToastMessage("Product successfully added!");
+    setTimeout(() => setShowToast(false), 3000);
     setValidationErrors([]);
   };
 
@@ -70,7 +132,8 @@ export default function Home() {
     setEditingProduct(null);
     setShowForm(false);
     setShowToast(true);
-    setToastMessage("Items successfully updated!");
+    setToastMessage("Product successfully updated!");
+    setTimeout(() => setShowToast(false), 3000);
     setValidationErrors([]);
   };
 
@@ -79,8 +142,7 @@ export default function Home() {
     if (product && productService.deleteProduct(id)) {
       loadProducts();
       setShowToast(true);
-      setToastMessage("Items successfully deleted!");
-      // Hide toast after 3 seconds
+      setToastMessage("Product successfully deleted!");
       setTimeout(() => setShowToast(false), 3000);
     }
   };
@@ -100,17 +162,73 @@ export default function Home() {
         <div className="px-4 py-6 sm:px-0">
           <div className="flex justify-between items-center mb-8">
             <h1 className="text-3xl font-bold text-gray-900">Our Products</h1>
-            <button
-              onClick={() => {
-                setEditingProduct(null);
-                setShowForm(true);
-                setValidationErrors([]);
-              }}
-              className="bg-blue-600 text-white px-4 py-2 rounded-md hover:bg-blue-700"
-            >
-              Add New Product
-            </button>
+            <div className="flex gap-4">
+              <button
+                onClick={() => setAutoRefresh(!autoRefresh)}
+                className={`px-4 py-2 rounded-md ${
+                  autoRefresh
+                    ? "bg-red-600 hover:bg-red-700 text-white"
+                    : "bg-green-600 hover:bg-green-700 text-white"
+                }`}
+              >
+                {autoRefresh ? "Stop Auto-Refresh" : "Start Auto-Refresh"}
+              </button>
+              <button
+                onClick={() => {
+                  setEditingProduct(null);
+                  setShowForm(true);
+                  setValidationErrors([]);
+                }}
+                className="bg-blue-600 text-white px-4 py-2 rounded-md hover:bg-blue-700"
+              >
+                Add New Product
+              </button>
+            </div>
           </div>
+
+          {/* Loading indicator */}
+          {isLoading && (
+            <div className="fixed top-0 left-0 w-full h-1 bg-blue-200">
+              <div
+                className="h-full bg-blue-600 animate-pulse"
+                style={{ width: "100%" }}
+              ></div>
+            </div>
+          )}
+
+          {/* Add Charts component */}
+          <ProductCharts products={products} />
+
+          {/* Statistics Summary */}
+          {statistics && (
+            <div className="bg-white p-4 rounded-lg shadow-sm mb-6">
+              <h2 className="text-lg font-semibold mb-2">Product Statistics</h2>
+              <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                <div className="border p-3 rounded bg-green-50">
+                  <p className="text-sm font-medium">Most Expensive</p>
+                  <p className="text-xl font-bold text-green-700">
+                    ${statistics.maxPrice.toFixed(2)}
+                  </p>
+                </div>
+                <div className="border p-3 rounded bg-blue-50">
+                  <p className="text-sm font-medium">Average Price</p>
+                  <p className="text-xl font-bold text-blue-700">
+                    ${statistics.avgPrice.toFixed(2)}
+                  </p>
+                </div>
+                <div className="border p-3 rounded bg-red-50">
+                  <p className="text-sm font-medium">Least Expensive</p>
+                  <p className="text-xl font-bold text-red-700">
+                    ${statistics.minPrice.toFixed(2)}
+                  </p>
+                </div>
+              </div>
+              <p className="text-xs text-gray-500 mt-2">
+                * Products are highlighted in the list according to these
+                statistics
+              </p>
+            </div>
+          )}
 
           {/* Filters and Sorting */}
           <div className="bg-white p-4 rounded-lg shadow-sm mb-6">
@@ -256,12 +374,15 @@ export default function Home() {
           )}
 
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-6">
-            {products.map((product) => (
+            {paginatedProducts.map((product) => (
               <ProductCard
                 key={product.id}
                 {...product}
                 onDelete={handleDeleteProduct}
                 onEdit={handleEditProduct}
+                isHighestPrice={statistics?.maxPriceProduct === product.id}
+                isLowestPrice={statistics?.minPriceProduct === product.id}
+                isAveragePrice={statistics?.avgPriceProduct === product.id}
               />
             ))}
           </div>
@@ -271,6 +392,49 @@ export default function Home() {
               <p className="text-gray-500">
                 No products found matching your criteria.
               </p>
+            </div>
+          )}
+
+          {/* Pagination */}
+          {totalPages > 1 && (
+            <div className="flex justify-center mt-8">
+              <nav className="flex items-center">
+                <button
+                  onClick={() =>
+                    setCurrentPage((prev) => Math.max(prev - 1, 1))
+                  }
+                  disabled={currentPage === 1}
+                  className="px-3 py-1 rounded-md mr-2 bg-white border disabled:opacity-50"
+                >
+                  Previous
+                </button>
+                <div className="flex space-x-1">
+                  {Array.from({ length: totalPages }, (_, i) => i + 1).map(
+                    (page) => (
+                      <button
+                        key={page}
+                        onClick={() => setCurrentPage(page)}
+                        className={`px-3 py-1 rounded-md ${
+                          currentPage === page
+                            ? "bg-blue-600 text-white"
+                            : "bg-white"
+                        }`}
+                      >
+                        {page}
+                      </button>
+                    )
+                  )}
+                </div>
+                <button
+                  onClick={() =>
+                    setCurrentPage((prev) => Math.min(prev + 1, totalPages))
+                  }
+                  disabled={currentPage === totalPages}
+                  className="px-3 py-1 rounded-md ml-2 bg-white border disabled:opacity-50"
+                >
+                  Next
+                </button>
+              </nav>
             </div>
           )}
 

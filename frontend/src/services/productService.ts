@@ -45,6 +45,54 @@ const mockProducts: Product[] = [
     description: "Comfortable running shoes",
     category: "Clothes",
   },
+  {
+    id: 4,
+    name: "Nike Air Max",
+    price: 199.99,
+    image: "/assets/images/nike.jpg",
+    description: "Classic Nike Air Max sneakers",
+    category: "Shoes",
+  },
+  {
+    id: 5,
+    name: "Adidas Ultra Boost",
+    price: 179.99,
+    image: "/assets/images/adidas-ultraboost.jpg",
+    description: "Comfortable running shoes",
+    category: "Shoes",
+  },
+  {
+    id: 6,
+    name: "T-Shirt",
+    price: 19.99,
+    image: "/assets/images/tshirt.jpeg",
+    description: "Comfortable running shoes",
+    category: "Clothes",
+  },
+  {
+    id: 7,
+    name: "Nike Air Max 2",
+    price: 199.99,
+    image: "/assets/images/nike.jpg",
+    description: "Classic Nike Air Max sneakers",
+    category: "Shoes",
+  },
+  {
+    id: 8,
+    name: "Adidas Ultra Boost 2",
+    price: 179.99,
+    image: "/assets/images/adidas-ultraboost.jpg",
+    description: "Comfortable running shoes",
+    category: "Shoes",
+  },
+  {
+    id: 9,
+    name: "T-Shirt 2",
+    price: 19.99,
+    image: "/assets/images/tshirt.jpeg",
+    description: "Comfortable running shoes",
+    category: "Clothes",
+  },
 ];
 
 class ProductService {
@@ -189,6 +237,56 @@ class ProductService {
 
     this.products.splice(index, 1);
     return true;
+  }
+
+  async fetchUpdatedPrices(): Promise<void> {
+    return new Promise((resolve) => {
+      setTimeout(() => {
+        this.products = this.products.map((product) => ({
+          ...product,
+          price: Math.max(
+            0.1,
+            product.price * (1 + (Math.random() * 0.1 - 0.05))
+          ),
+        }));
+        resolve();
+      }, 1000);
+    });
+  }
+
+  // Get aggregated statistics asynchronously
+  async getStatistics(): Promise<{
+    totalProducts: number;
+    totalValue: number;
+    avgPrice: number;
+    categories: { name: string; count: number }[];
+  }> {
+    return new Promise((resolve) => {
+      setTimeout(() => {
+        const categories: Record<string, number> = {};
+        let totalValue = 0;
+
+        this.products.forEach((product) => {
+          totalValue += product.price;
+
+          if (categories[product.category]) {
+            categories[product.category]++;
+          } else {
+            categories[product.category] = 1;
+          }
+        });
+
+        resolve({
+          totalProducts: this.products.length,
+          totalValue,
+          avgPrice: totalValue / this.products.length,
+          categories: Object.entries(categories).map(([name, count]) => ({
+            name,
+            count,
+          })),
+        });
+      }, 1000);
+    });
   }
 }
 
