@@ -11,6 +11,7 @@ import {
   ProductFilters,
   ValidationError,
 } from "../services/productService";
+import { api } from "../services/api";
 
 export default function Home() {
   const [products, setProducts] = useState<Product[]>([]);
@@ -32,17 +33,32 @@ export default function Home() {
 
   useEffect(() => {
     loadProducts();
-    setCategories(productService.getCategories());
   }, []);
 
-  const loadProducts = () => {
-    const filteredProducts = productService.getProducts(
-      filters,
-      sortBy,
-      sortOrder
-    );
-    setProducts(filteredProducts);
-    setCurrentPage(1);
+  const loadProducts = async () => {
+    try {
+      setIsLoading(true);
+      const queryParams = {
+        category: filters.category,
+        min_price: filters.minPrice,
+        max_price: filters.maxPrice,
+        search_term: filters.searchTerm,
+        sort_by: sortBy,
+        sort_order: sortOrder,
+      };
+      const fetchedProducts = await api.getProducts(queryParams);
+      setProducts(fetchedProducts);
+      setCategories(
+        Array.from(new Set(fetchedProducts.map((p) => p.category)))
+      );
+      setCurrentPage(1);
+    } catch (error) {
+      setToastMessage("Failed to load products");
+      setShowToast(true);
+      setTimeout(() => setShowToast(false), 3000);
+    } finally {
+      setIsLoading(false);
+    }
   };
 
   useEffect(() => {
@@ -51,14 +67,48 @@ export default function Home() {
     if (autoRefresh) {
       setToastMessage("Auto-refreshing prices...");
       setShowToast(true);
-
       setTimeout(() => setShowToast(false), 2000);
 
       intervalId = setInterval(async () => {
-        setIsLoading(true);
-        await productService.fetchUpdatedPrices();
-        loadProducts();
-        setIsLoading(false);
+        try {
+          setIsLoading(true);
+          const fetchedProducts = await api.getProducts();
+
+          // Compare prices and highlight changes
+          setProducts((prevProducts) => {
+            return fetchedProducts.map((newProduct) => {
+              const prevProduct = prevProducts.find(
+                (p) => p.id === newProduct.id
+              );
+              if (prevProduct && prevProduct.price !== newProduct.price) {
+                // Show price change toast
+                const priceDiff = newProduct.price - prevProduct.price;
+                const changePercent = (
+                  (priceDiff / prevProduct.price) *
+                  100
+                ).toFixed(1);
+                setToastMessage(
+                  `${newProduct.name}: ${
+                    priceDiff > 0 ? "+" : ""
+                  }${changePercent}%`
+                );
+                setShowToast(true);
+                setTimeout(() => setShowToast(false), 2000);
+              }
+              return newProduct;
+            });
+          });
+
+          setCategories(
+            Array.from(new Set(fetchedProducts.map((p) => p.category)))
+          );
+        } catch (error) {
+          setToastMessage("Failed to refresh products");
+          setShowToast(true);
+          setTimeout(() => setShowToast(false), 2000);
+        } finally {
+          setIsLoading(false);
+        }
       }, 5000);
     }
 
@@ -105,44 +155,56 @@ export default function Home() {
     [products, itemsPerPage]
   );
 
-  const handleAddProduct = (product: Omit<Product, "id">) => {
-    const result = productService.addProduct(product);
-    if (result.errors) {
-      setValidationErrors(result.errors);
-      return;
+  const handleAddProduct = async (product: Omit<Product, "id">) => {
+    try {
+      const newProduct = await api.createProduct(product);
+      setProducts((prev) => [...prev, newProduct]);
+      setCategories((prev) => Array.from(new Set([...prev, product.category])));
+      setToastMessage("Product added successfully");
+      setShowToast(true);
+      setTimeout(() => setShowToast(false), 3000);
+      setShowForm(false);
+    } catch (error) {
+      setToastMessage("Failed to add product");
+      setShowToast(true);
+      setTimeout(() => setShowToast(false), 3000);
     }
-    loadProducts();
-    setCategories(productService.getCategories());
-    setShowForm(false);
-    setShowToast(true);
-    setToastMessage("Product successfully added!");
-    setTimeout(() => setShowToast(false), 3000);
-    setValidationErrors([]);
   };
 
-  const handleUpdateProduct = (product: Omit<Product, "id">) => {
+  const handleUpdateProduct = async (product: Omit<Product, "id">) => {
     if (!editingProduct) return;
 
-    const result = productService.updateProduct(editingProduct.id, product);
-    if (result.errors) {
-      setValidationErrors(result.errors);
-      return;
+    try {
+      const updatedProduct = await api.updateProduct(editingProduct.id, {
+        ...product,
+        id: editingProduct.id,
+      });
+      setProducts((prev) =>
+        prev.map((p) => (p.id === editingProduct.id ? updatedProduct : p))
+      );
+      setCategories((prev) => Array.from(new Set([...prev, product.category])));
+      setToastMessage("Product updated successfully");
+      setShowToast(true);
+      setTimeout(() => setShowToast(false), 3000);
+      setEditingProduct(null);
+      setShowForm(false);
+    } catch (error) {
+      setToastMessage("Failed to update product");
+      setShowToast(true);
+      setTimeout(() => setShowToast(false), 3000);
     }
-    loadProducts();
-    setEditingProduct(null);
-    setShowForm(false);
-    setShowToast(true);
-    setToastMessage("Product successfully updated!");
-    setTimeout(() => setShowToast(false), 3000);
-    setValidationErrors([]);
   };
 
-  const handleDeleteProduct = (id: number) => {
-    const product = products.find((p) => p.id === id);
-    if (product && productService.deleteProduct(id)) {
-      loadProducts();
+  const handleDeleteProduct = async (id: number) => {
+    try {
+      await api.deleteProduct(id);
+      setProducts((prev) => prev.filter((p) => p.id !== id));
+      setToastMessage("Product deleted successfully");
       setShowToast(true);
-      setToastMessage("Product successfully deleted!");
+      setTimeout(() => setShowToast(false), 3000);
+    } catch (error) {
+      setToastMessage("Failed to delete product");
+      setShowToast(true);
       setTimeout(() => setShowToast(false), 3000);
     }
   };

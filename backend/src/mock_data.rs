@@ -1,0 +1,86 @@
+use crate::Product;
+
+pub fn init_mock_data() -> Vec<Product> {
+    vec![
+        Product {
+            id: 1,
+            name: "Nike Air Max rust".to_string(),
+            price: 199.99,
+            image: "/assets/images/nike.jpg".to_string(),
+            description: "Classic Nike Air Max sneakers".to_string(),
+            category: "Shoes".to_string(),
+        },
+        Product {
+            id: 2,
+            name: "Adidas Ultra Boost".to_string(),
+            price: 179.99,
+            image: "/assets/images/adidas-ultraboost.jpg".to_string(),
+            description: "Comfortable running shoes".to_string(),
+            category: "Shoes".to_string(),
+        },
+        Product {
+            id: 3,
+            name: "T-Shirt".to_string(),
+            price: 19.99,
+            image: "/assets/images/tshirt.jpeg".to_string(),
+            description: "Comfortable cotton t-shirt".to_string(),
+            category: "Clothes".to_string(),
+        },
+        Product {
+            id: 4,
+            name: "Nike Air Max".to_string(),
+            price: 199.99,
+            image: "/assets/images/nike.jpg".to_string(),
+            description: "Classic Nike Air Max sneakers".to_string(),
+            category: "Shoes".to_string(),
+        },
+        Product {
+            id: 5,
+            name: "Adidas Ultra Boost".to_string(),
+            price: 179.99,
+            image: "/assets/images/adidas-ultraboost.jpg".to_string(),
+            description: "Comfortable running shoes".to_string(),
+            category: "Shoes".to_string(),
+        },
+        Product {
+            id: 6,
+            name: "T-Shirt".to_string(),
+            price: 19.99,
+            image: "/assets/images/tshirt.jpeg".to_string(),
+            description: "Comfortable cotton t-shirt".to_string(),
+            category: "Clothes".to_string(),
+        },
+        Product {
+            id: 7,
+            name: "Nike Air Max 2".to_string(),
+            price: 199.99,
+            image: "/assets/images/nike.jpg".to_string(),
+            description: "Classic Nike Air Max sneakers".to_string(),
+            category: "Shoes".to_string(),
+        },
+        Product {
+            id: 8,
+            name: "Adidas Ultra Boost 2".to_string(),
+            price: 179.99,
+            image: "/assets/images/adidas-ultraboost.jpg".to_string(),
+            description: "Comfortable running shoes".to_string(),
+            category: "Shoes".to_string(),
+        },
+        Product {
+            id: 9,
+            name: "T-Shirt 2".to_string(),
+            price: 19.99,
+            image: "/assets/images/tshirt.jpeg".to_string(),
+            description: "Comfortable cotton t-shirt".to_string(),
+            category: "Clothes".to_string(),
+        },
+        Product {
+            id: 10,
+            name: "Nike Air Max 3".to_string(),
+            price: 199.99,
+            image: "/assets/images/nike.jpg".to_string(),
+            description: "Classic Nike Air Max sneakers".to_string(),
+            category: "Shoes".to_string(),
+        },
+    ]
+} 
