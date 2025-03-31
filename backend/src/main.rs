@@ -2,38 +2,12 @@ use actix_cors::Cors;
 use actix_web::{web, App, HttpResponse, HttpServer, Responder};
 use serde::{Deserialize, Serialize};
 use std::sync::Mutex;
+use std::collections::HashMap;
 use rand::Rng;
+use models::{Product, CreateProductRequest, ProductQuery};
 
+mod models;
 mod mock_data;
-
-#[derive(Debug, Serialize, Deserialize, Clone)]
-pub struct Product {
-    pub id: i32,
-    pub name: String,
-    pub price: f64,
-    pub image: String,
-    pub description: String,
-    pub category: String,
-}
-
-#[derive(Debug, Serialize, Deserialize)]
-pub struct CreateProductRequest {
-    pub name: String,
-    pub price: f64,
-    pub image: String,
-    pub description: String,
-    pub category: String,
-}
-
-#[derive(Debug, Deserialize)]
-pub struct ProductQuery {
-    pub category: Option<String>,
-    pub min_price: Option<f64>,
-    pub max_price: Option<f64>,
-    pub search_term: Option<String>,
-    pub sort_by: Option<String>,
-    pub sort_order: Option<String>,
-}
 
 // Global state to store products
 pub struct AppState {

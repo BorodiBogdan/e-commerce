@@ -1,4 +1,4 @@
-use crate::Product;
+use crate::models::Product;
 
 pub fn init_mock_data() -> Vec<Product> {
     vec![
