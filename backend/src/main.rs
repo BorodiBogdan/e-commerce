@@ -2,12 +2,15 @@ use actix_cors::Cors;
 use actix_web::{web, App, HttpResponse, HttpServer, Responder};
 use serde::{Deserialize, Serialize};
 use std::sync::Mutex;
-use std::collections::HashMap;
 use rand::Rng;
 use models::{Product, CreateProductRequest, ProductQuery};
+use actix_web::ResponseError;
 
 mod models;
 mod mock_data;
+mod validation;
+#[cfg(test)]
+mod tests;
 
 // Global state to store products
 pub struct AppState {
@@ -93,6 +96,9 @@ async fn create_product(
     data: web::Data<AppState>,
     product: web::Json<CreateProductRequest>,
 ) -> impl Responder {
+    if let Err(e) = validation::validate_product(&product) {
+        return e.error_response();
+    }
     let mut products = data.products.lock().unwrap();
     let new_product = Product {
         id: products.iter().map(|p| p.id).max().unwrap_or(0) + 1,
