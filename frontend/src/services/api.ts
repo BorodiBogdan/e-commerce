@@ -1,6 +1,6 @@
-import { Product } from "./productService";
+import { Product } from "../types";
 
-const API_BASE_URL = "http://localhost:3001/api";
+export const API_BASE_URL = "http://localhost:3001";
 
 interface ProductQueryParams {
   category?: string;
@@ -22,7 +22,7 @@ export const api = {
       });
     }
 
-    const response = await fetch(`${API_BASE_URL}/products?${queryString}`);
+    const response = await fetch(`${API_BASE_URL}/api/products?${queryString}`);
     if (!response.ok) {
       throw new Error("Failed to fetch products");
     }
@@ -30,7 +30,7 @@ export const api = {
   },
 
   async getProduct(id: number): Promise<Product> {
-    const response = await fetch(`${API_BASE_URL}/products/${id}`);
+    const response = await fetch(`${API_BASE_URL}/api/products/${id}`);
     if (!response.ok) {
       throw new Error("Failed to fetch product");
     }
@@ -38,7 +38,7 @@ export const api = {
   },
 
   async createProduct(product: Omit<Product, "id">): Promise<Product> {
-    const response = await fetch(`${API_BASE_URL}/products`, {
+    const response = await fetch(`${API_BASE_URL}/api/products`, {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
@@ -59,7 +59,7 @@ export const api = {
   },
 
   async updateProduct(id: number, product: Product): Promise<Product> {
-    const response = await fetch(`${API_BASE_URL}/products/${id}`, {
+    const response = await fetch(`${API_BASE_URL}/api/products/${id}`, {
       method: "PUT",
       headers: {
         "Content-Type": "application/json",
@@ -74,7 +74,7 @@ export const api = {
   },
 
   async deleteProduct(id: number): Promise<void> {
-    const response = await fetch(`${API_BASE_URL}/products/${id}`, {
+    const response = await fetch(`${API_BASE_URL}/api/products/${id}`, {
       method: "DELETE",
     });
     if (!response.ok) {

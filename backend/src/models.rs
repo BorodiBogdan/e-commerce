@@ -27,4 +27,6 @@ pub struct ProductQuery {
     pub search_term: Option<String>,
     pub sort_by: Option<String>,
     pub sort_order: Option<String>,
+    pub offset: Option<usize>,
+    pub limit: Option<usize>,
 } 

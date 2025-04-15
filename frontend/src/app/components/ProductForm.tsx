@@ -1,20 +1,9 @@
 import { useState } from "react";
+import { Product } from "../../types";
 
 interface ProductFormProps {
-  onSubmit: (product: {
-    name: string;
-    price: number;
-    image: string;
-    description: string;
-    category: string;
-  }) => void;
-  initialData?: {
-    name: string;
-    price: number;
-    image: string;
-    description: string;
-    category: string;
-  };
+  onSubmit: (product: Omit<Product, "id"> & { id?: number }) => void;
+  initialData?: Product;
   onCancel: () => void;
 }
 
@@ -24,6 +13,7 @@ export default function ProductForm({
   onCancel,
 }: ProductFormProps) {
   const [formData, setFormData] = useState({
+    id: initialData?.id,
     name: initialData?.name || "",
     price: initialData?.price || 0,
     image: initialData?.image || "",

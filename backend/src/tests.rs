@@ -184,17 +184,26 @@ async fn test_validate_product() {
         name: "Valid Product".to_string(),
         price: 100.0,
         image: "/valid.jpg".to_string(),
-        description: "Valid Description".to_string(),
+        description: "This is a valid description with more than 10 characters".to_string(),
         category: "Test".to_string(),
     };
     assert!(validation::validate_product(&valid_product).is_ok());
 
-    let invalid_product = CreateProductRequest {
-        name: "Short".to_string(),
+    let invalid_product_price = CreateProductRequest {
+        name: "Valid Product".to_string(),
         price: -50.0,
         image: "/invalid.jpg".to_string(),
-        description: "Invalid Description".to_string(),
+        description: "Valid description".to_string(),
         category: "Test".to_string(),
     };
-    assert!(validation::validate_product(&invalid_product).is_err());
+    assert!(validation::validate_product(&invalid_product_price).is_err());
+
+    let invalid_product_description = CreateProductRequest {
+        name: "Valid Product".to_string(),
+        price: 100.0,
+        image: "/invalid.jpg".to_string(),
+        description: "Short".to_string(),
+        category: "Test".to_string(),
+    };
+    assert!(validation::validate_product(&invalid_product_description).is_err());
 }

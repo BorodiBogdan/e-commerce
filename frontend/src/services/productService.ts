@@ -1,111 +1,31 @@
-export interface Product {
-  id: number;
-  name: string;
-  price: number;
-  image: string;
-  description: string;
-  category: string;
-}
+import { Product, ProductFilters, ValidationError } from "../types";
+import OfflineService from "./offlineService";
 
-export interface ProductFilters {
-  category?: string;
-  minPrice?: number;
-  maxPrice?: number;
-  searchTerm?: string;
-}
-
-export interface ValidationError {
-  field: string;
-  message: string;
-}
-
-// Initial mock data
-const mockProducts: Product[] = [
-  {
-    id: 1,
-    name: "Nike Air Max",
-    price: 199.99,
-    image: "/assets/images/nike.jpg",
-    description: "Classic Nike Air Max sneakers",
-    category: "Shoes",
-  },
-  {
-    id: 2,
-    name: "Adidas Ultra Boost",
-    price: 179.99,
-    image: "/assets/images/adidas-ultraboost.jpg",
-    description: "Comfortable running shoes",
-    category: "Shoes",
-  },
-  {
-    id: 3,
-    name: "T-Shirt",
-    price: 19.99,
-    image: "/assets/images/tshirt.jpeg",
-    description: "Comfortable running shoes",
-    category: "Clothes",
-  },
-  {
-    id: 4,
-    name: "Nike Air Max",
-    price: 199.99,
-    image: "/assets/images/nike.jpg",
-    description: "Classic Nike Air Max sneakers",
-    category: "Shoes",
-  },
-  {
-    id: 5,
-    name: "Adidas Ultra Boost",
-    price: 179.99,
-    image: "/assets/images/adidas-ultraboost.jpg",
-    description: "Comfortable running shoes",
-    category: "Shoes",
-  },
-  {
-    id: 6,
-    name: "T-Shirt",
-    price: 19.99,
-    image: "/assets/images/tshirt.jpeg",
-    description: "Comfortable running shoes",
-    category: "Clothes",
-  },
-  {
-    id: 7,
-    name: "Nike Air Max 2",
-    price: 199.99,
-    image: "/assets/images/nike.jpg",
-    description: "Classic Nike Air Max sneakers",
-    category: "Shoes",
-  },
-  {
-    id: 8,
-    name: "Adidas Ultra Boost 2",
-    price: 179.99,
-    image: "/assets/images/adidas-ultraboost.jpg",
-    description: "Comfortable running shoes",
-    category: "Shoes",
-  },
-  {
-    id: 9,
-    name: "T-Shirt 2",
-    price: 19.99,
-    image: "/assets/images/tshirt.jpeg",
-    description: "Comfortable running shoes",
-    category: "Clothes",
-  },
-];
+const API_BASE_URL = "http://localhost:3001/api";
+const ITEMS_PER_PAGE = 6;
 
 class ProductService {
-  private products: Product[] = [...mockProducts];
+  private static instance: ProductService;
+  private offlineService: OfflineService;
 
-  // Validation function
+  private constructor() {
+    this.offlineService = OfflineService.getInstance();
+  }
+
+  public static getInstance(): ProductService {
+    if (!ProductService.instance) {
+      ProductService.instance = new ProductService();
+    }
+    return ProductService.instance;
+  }
+
   private validateProduct(product: Omit<Product, "id">): ValidationError[] {
     const errors: ValidationError[] = [];
 
-    if (!product.name || product.name.trim().length < 3) {
+    if (!product.name || product.name.trim().length < 10) {
       errors.push({
         field: "name",
-        message: "Name must be at least 3 characters long",
+        message: "Name must be at least 10 characters long",
       });
     }
 
@@ -133,161 +53,362 @@ class ProductService {
     return errors;
   }
 
-  // Get all products with optional filtering and sorting
-  getProducts(
-    filters?: ProductFilters,
-    sortBy?: keyof Product,
-    sortOrder: "asc" | "desc" = "asc"
-  ): Product[] {
-    let filteredProducts = [...this.products];
+  public async getProducts(
+    filters: ProductFilters = {},
+    page: number = 0,
+    limit: number = 6
+  ): Promise<{ products: Product[]; hasMore: boolean }> {
+    const status = this.offlineService.getStatus();
 
-    // Apply filters
-    if (filters) {
-      if (filters.category) {
-        filteredProducts = filteredProducts.filter(
-          (p) => p.category === filters.category
+    if (status.isOffline) {
+      try {
+        const cached = localStorage.getItem("products");
+        const allProducts = cached ? JSON.parse(cached) : [];
+
+        // Apply filters locally
+        let filteredProducts = [...allProducts];
+        if (filters.category) {
+          filteredProducts = filteredProducts.filter(
+            (p) => p.category === filters.category
+          );
+        }
+        if (filters.minPrice !== undefined) {
+          filteredProducts = filteredProducts.filter(
+            (p) => p.price >= filters.minPrice!
+          );
+        }
+        if (filters.maxPrice !== undefined) {
+          filteredProducts = filteredProducts.filter(
+            (p) => p.price <= filters.maxPrice!
+          );
+        }
+        if (filters.searchTerm) {
+          const searchLower = filters.searchTerm.toLowerCase();
+          filteredProducts = filteredProducts.filter(
+            (p) =>
+              p.name.toLowerCase().includes(searchLower) ||
+              p.description.toLowerCase().includes(searchLower)
+          );
+        }
+
+        // Apply sorting
+        if (filters.sortBy) {
+          filteredProducts.sort((a, b) => {
+            const order = filters.sortOrder === "desc" ? -1 : 1;
+            if (filters.sortBy === "price") {
+              return (a.price - b.price) * order;
+            }
+            if (filters.sortBy === "name") {
+              return a.name.localeCompare(b.name) * order;
+            }
+            return 0;
+          });
+        }
+
+        // Apply pagination
+        const offset = page * limit;
+        const paginatedProducts = filteredProducts.slice(
+          offset,
+          offset + limit
         );
-      }
-      if (filters.minPrice !== undefined) {
-        filteredProducts = filteredProducts.filter(
-          (p) => p.price >= filters.minPrice!
-        );
-      }
-      if (filters.maxPrice !== undefined) {
-        filteredProducts = filteredProducts.filter(
-          (p) => p.price <= filters.maxPrice!
-        );
-      }
-      if (filters.searchTerm) {
-        const searchTerm = filters.searchTerm.toLowerCase();
-        filteredProducts = filteredProducts.filter(
-          (p) =>
-            p.name.toLowerCase().includes(searchTerm) ||
-            p.description.toLowerCase().includes(searchTerm)
-        );
+        const hasMore = offset + limit < filteredProducts.length;
+
+        return { products: paginatedProducts, hasMore };
+      } catch (error) {
+        console.error("Error in offline getProducts:", error);
+        throw error;
       }
     }
 
-    // Apply sorting
-    if (sortBy) {
-      filteredProducts.sort((a, b) => {
-        const aValue = a[sortBy];
-        const bValue = b[sortBy];
-        if (sortOrder === "asc") {
-          return aValue < bValue ? -1 : aValue > bValue ? 1 : 0;
-        } else {
-          return bValue < aValue ? -1 : bValue > aValue ? 1 : 0;
+    try {
+      const queryParams = new URLSearchParams();
+      Object.entries(filters).forEach(([key, value]) => {
+        if (value !== undefined && value !== "") {
+          queryParams.append(key, value.toString());
         }
       });
+      queryParams.append("offset", (page * limit).toString());
+      queryParams.append("limit", limit.toString());
+
+      const response = await fetch(
+        `${API_BASE_URL}/products?${queryParams.toString()}`,
+        {
+          headers: {
+            Accept: "application/json",
+            "Content-Type": "application/json",
+          },
+        }
+      );
+
+      if (!response.ok) {
+        const errorText = await response.text();
+        console.error("Failed to fetch products:", {
+          status: response.status,
+          statusText: response.statusText,
+          error: errorText,
+        });
+        throw new Error(
+          `Failed to fetch products: ${response.status} ${response.statusText}`
+        );
+      }
+
+      const products = await response.json();
+      const hasMore = products.length === limit;
+
+      return { products, hasMore };
+    } catch (error) {
+      console.error("Error in online getProducts:", error);
+      throw error;
     }
-
-    return filteredProducts;
   }
 
-  // Get unique categories
-  getCategories(): string[] {
-    return Array.from(new Set(this.products.map((p) => p.category)));
-  }
+  private filterProducts(
+    products: Product[],
+    filters?: ProductFilters
+  ): Product[] {
+    let filtered = [...products];
 
-  // Add a new product
-  addProduct(product: Omit<Product, "id">): {
-    product?: Product;
-    errors?: ValidationError[];
-  } {
-    const validationErrors = this.validateProduct(product);
-    if (validationErrors.length > 0) {
-      return { errors: validationErrors };
-    }
-
-    const newProduct = {
-      ...product,
-      id: Math.max(...this.products.map((p) => p.id), 0) + 1,
-    };
-
-    this.products.push(newProduct);
-    return { product: newProduct };
-  }
-
-  // Update an existing product
-  updateProduct(
-    id: number,
-    product: Omit<Product, "id">
-  ): { product?: Product; errors?: ValidationError[] } {
-    const validationErrors = this.validateProduct(product);
-    if (validationErrors.length > 0) {
-      return { errors: validationErrors };
-    }
-
-    const index = this.products.findIndex((p) => p.id === id);
-    if (index === -1) {
-      return { errors: [{ field: "id", message: "Product not found" }] };
-    }
-
-    const updatedProduct = { ...product, id };
-    this.products[index] = updatedProduct;
-    return { product: updatedProduct };
-  }
-
-  // Delete a product
-  deleteProduct(id: number): boolean {
-    const index = this.products.findIndex((p) => p.id === id);
-    if (index === -1) {
-      return false;
-    }
-
-    this.products.splice(index, 1);
-    return true;
-  }
-
-  async fetchUpdatedPrices(): Promise<void> {
-    return new Promise((resolve) => {
-      setTimeout(() => {
-        this.products = this.products.map((product) => ({
-          ...product,
-          price: Math.max(
-            0.1,
-            product.price * (1 + (Math.random() * 0.1 - 0.05))
-          ),
-        }));
-        resolve();
-      }, 1000);
-    });
-  }
-
-  // Get aggregated statistics asynchronously
-  async getStatistics(): Promise<{
-    totalProducts: number;
-    totalValue: number;
-    avgPrice: number;
-    categories: { name: string; count: number }[];
-  }> {
-    return new Promise((resolve) => {
-      setTimeout(() => {
-        const categories: Record<string, number> = {};
-        let totalValue = 0;
-
-        this.products.forEach((product) => {
-          totalValue += product.price;
-
-          if (categories[product.category]) {
-            categories[product.category]++;
-          } else {
-            categories[product.category] = 1;
+    if (filters) {
+      if (filters.category) {
+        filtered = filtered.filter((p) => p.category === filters.category);
+      }
+      if (filters.minPrice) {
+        filtered = filtered.filter((p) => p.price >= filters.minPrice!);
+      }
+      if (filters.maxPrice) {
+        filtered = filtered.filter((p) => p.price <= filters.maxPrice!);
+      }
+      if (filters.searchTerm) {
+        const term = filters.searchTerm.toLowerCase();
+        filtered = filtered.filter(
+          (p) =>
+            p.name.toLowerCase().includes(term) ||
+            p.description.toLowerCase().includes(term)
+        );
+      }
+      if (filters.sortBy) {
+        filtered.sort((a, b) => {
+          const order = filters.sortOrder === "desc" ? -1 : 1;
+          if (filters.sortBy === "price") {
+            return (a.price - b.price) * order;
           }
+          if (filters.sortBy === "name") {
+            return a.name.localeCompare(b.name) * order;
+          }
+          return 0;
+        });
+      }
+    }
+
+    return filtered;
+  }
+
+  public async createProduct(product: Omit<Product, "id">): Promise<Product> {
+    const validationErrors = this.validateProduct(product);
+    if (validationErrors.length > 0) {
+      throw new Error(validationErrors.map((e) => e.message).join(", "));
+    }
+
+    const status = this.offlineService.getStatus();
+
+    if (status.isOffline) {
+      try {
+        const newProduct: Product = {
+          ...product,
+          id: Date.now(), // Temporary ID for offline mode
+        };
+
+        // Get existing products from localStorage
+        const cached = localStorage.getItem("products");
+        const existingProducts = cached ? JSON.parse(cached) : [];
+
+        // Add to pending operations
+        this.offlineService.addPendingOperation({
+          type: "CREATE",
+          product: newProduct,
+          timestamp: Date.now(),
         });
 
-        resolve({
-          totalProducts: this.products.length,
-          totalValue,
-          avgPrice: totalValue / this.products.length,
-          categories: Object.entries(categories).map(([name, count]) => ({
-            name,
-            count,
-          })),
+        // Update local cache with new product
+        const updatedProducts = [...existingProducts, newProduct];
+        localStorage.setItem("products", JSON.stringify(updatedProducts));
+
+        return newProduct;
+      } catch (error) {
+        console.error("Error in offline create:", error);
+        throw new Error("Failed to create product in offline mode");
+      }
+    }
+
+    try {
+      const response = await fetch(`${API_BASE_URL}/products`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(product),
+      });
+
+      if (!response.ok) {
+        const errorData = await response.json();
+        throw new Error(errorData.error || "Failed to create product");
+      }
+      return await response.json();
+    } catch (error) {
+      console.error("Error in online create:", error);
+      throw error;
+    }
+  }
+
+  public async updateProduct(product: Product): Promise<Product> {
+    if (!product || typeof product.id !== "number" || isNaN(product.id)) {
+      throw new Error("Invalid product ID");
+    }
+
+    const validationErrors = this.validateProduct(product);
+    if (validationErrors.length > 0) {
+      throw new Error(validationErrors.map((e) => e.message).join(", "));
+    }
+
+    const status = this.offlineService.getStatus();
+
+    if (status.isOffline) {
+      try {
+        // Get existing products from localStorage
+        const cached = localStorage.getItem("products");
+        const existingProducts = cached ? JSON.parse(cached) : [];
+
+        // Update the product in the local cache
+        const updatedProducts = existingProducts.map((p: Product) =>
+          p.id === product.id ? product : p
+        );
+        localStorage.setItem("products", JSON.stringify(updatedProducts));
+
+        // Add to pending operations
+        this.offlineService.addPendingOperation({
+          type: "UPDATE",
+          product,
+          timestamp: Date.now(),
         });
-      }, 1000);
-    });
+
+        return product;
+      } catch (error) {
+        console.error("Error in offline update:", error);
+        throw new Error("Failed to update product in offline mode");
+      }
+    }
+
+    try {
+      const response = await fetch(
+        `${API_BASE_URL}/products/${encodeURIComponent(product.id)}`,
+        {
+          method: "PUT",
+          headers: {
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify(product),
+        }
+      );
+
+      if (!response.ok) {
+        let errorMessage = "Failed to update product";
+        const responseClone = response.clone();
+        try {
+          const errorData = await response.json();
+          errorMessage = errorData.error || errorMessage;
+        } catch (e) {
+          const errorText = await responseClone.text();
+          errorMessage = errorText || errorMessage;
+        }
+        throw new Error(errorMessage);
+      }
+      return await response.json();
+    } catch (error) {
+      console.error("Error in online update:", error);
+      throw error;
+    }
+  }
+
+  public async deleteProduct(id: number): Promise<void> {
+    if (typeof id !== "number" || isNaN(id)) {
+      throw new Error("Invalid product ID");
+    }
+
+    const status = this.offlineService.getStatus();
+
+    if (status.isOffline) {
+      try {
+        // Get existing products from localStorage
+        const cached = localStorage.getItem("products");
+        const existingProducts = cached ? JSON.parse(cached) : [];
+
+        // Find the product to be deleted
+        const productToDelete = existingProducts.find(
+          (p: Product) => p.id === id
+        );
+        if (!productToDelete) {
+          console.warn(
+            "Product not found in offline cache, but proceeding with deletion"
+          );
+          // Create a minimal product object for the pending operation
+          const minimalProduct = { id } as Product;
+          this.offlineService.addPendingOperation({
+            type: "DELETE",
+            product: minimalProduct,
+            timestamp: Date.now(),
+          });
+        } else {
+          // Remove the product from the local cache
+          const updatedProducts = existingProducts.filter(
+            (p: Product) => p.id !== id
+          );
+          localStorage.setItem("products", JSON.stringify(updatedProducts));
+
+          // Add to pending operations
+          this.offlineService.addPendingOperation({
+            type: "DELETE",
+            product: productToDelete,
+            timestamp: Date.now(),
+          });
+        }
+      } catch (error) {
+        console.error("Error in offline delete:", error);
+        throw error;
+      }
+      return;
+    }
+
+    try {
+      const response = await fetch(
+        `${API_BASE_URL}/products/${encodeURIComponent(id)}`,
+        {
+          method: "DELETE",
+          headers: {
+            "Content-Type": "application/json",
+          },
+        }
+      );
+
+      if (!response.ok) {
+        let errorMessage = "Failed to delete product";
+        const responseClone = response.clone();
+        try {
+          const errorData = await response.json();
+          errorMessage = errorData.error || errorMessage;
+        } catch (e) {
+          const errorText = await responseClone.text();
+          errorMessage = errorText || errorMessage;
+        }
+        throw new Error(errorMessage);
+      }
+    } catch (error) {
+      console.error("Error in online delete:", error);
+      throw error;
+    }
+  }
+
+  private getCachedProducts(): Product[] {
+    const cached = localStorage.getItem("products");
+    return cached ? JSON.parse(cached) : [];
   }
 }
 
-export const productService = new ProductService();
+export default ProductService;

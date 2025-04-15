@@ -1,125 +1,111 @@
 "use client";
 
-import { useState, useEffect, useMemo } from "react";
+import { useEffect, useState, useCallback, useRef, useMemo } from "react";
+import { Product, ProductFilters, ValidationError } from "../types";
+import ProductService from "../services/productService";
 import ProductCard from "./components/ProductCard";
 import ProductForm from "./components/ProductForm";
 import ProductCharts from "./components/ProductCharts";
-import Toast from "./components/Toast";
-import {
-  Product,
-  productService,
-  ProductFilters,
-  ValidationError,
-} from "../services/productService";
-import { api } from "../services/api";
+import StatusIndicator from "../components/StatusIndicator";
+import FileUpload from "../components/FileUpload";
+import { FileManager } from "../components/FileManager";
 
 export default function Home() {
   const [products, setProducts] = useState<Product[]>([]);
+  const [allProducts, setAllProducts] = useState<Product[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+  const [page, setPage] = useState(0);
+  const [hasMore, setHasMore] = useState(true);
+  const [filters, setFilters] = useState<ProductFilters>({});
   const [showForm, setShowForm] = useState(false);
   const [editingProduct, setEditingProduct] = useState<Product | null>(null);
-  const [filters, setFilters] = useState<ProductFilters>({});
-  const [sortBy, setSortBy] = useState<keyof Product | undefined>();
-  const [sortOrder, setSortOrder] = useState<"asc" | "desc">("asc");
   const [validationErrors, setValidationErrors] = useState<ValidationError[]>(
     []
   );
-  const [toastMessage, setToastMessage] = useState<string>("");
-  const [categories, setCategories] = useState<string[]>([]);
-  const [showToast, setShowToast] = useState(false);
-  const [currentPage, setCurrentPage] = useState(1);
-  const [isLoading, setIsLoading] = useState(false);
-  const [autoRefresh, setAutoRefresh] = useState(false);
-  const itemsPerPage = 6;
+  const loadingRef = useRef(false);
+  const containerRef = useRef<HTMLDivElement>(null);
 
-  useEffect(() => {
-    loadProducts();
+  const productService = ProductService.getInstance();
+
+  const loadAllProducts = useCallback(async () => {
+    try {
+      const { products: allProducts } = await productService.getProducts(
+        {},
+        0,
+        1000
+      );
+      setAllProducts(allProducts);
+    } catch (err) {
+      console.error("Failed to load all products for charts:", err);
+    }
   }, []);
 
-  const loadProducts = async () => {
-    try {
-      setIsLoading(true);
-      const queryParams = {
-        category: filters.category,
-        min_price: filters.minPrice,
-        max_price: filters.maxPrice,
-        search_term: filters.searchTerm,
-        sort_by: sortBy,
-        sort_order: sortOrder,
-      };
-      const fetchedProducts = await api.getProducts(queryParams);
-      setProducts(fetchedProducts);
-      setCategories(
-        Array.from(new Set(fetchedProducts.map((p) => p.category)))
-      );
-      setCurrentPage(1);
-    } catch (error) {
-      setToastMessage("Failed to load products");
-      setShowToast(true);
-      setTimeout(() => setShowToast(false), 3000);
-    } finally {
-      setIsLoading(false);
-    }
-  };
+  const loadProducts = useCallback(
+    async (currentPage: number, reset: boolean = false) => {
+      if (loadingRef.current) return;
 
+      try {
+        loadingRef.current = true;
+        setLoading(true);
+        const { products: newProducts, hasMore: newHasMore } =
+          await productService.getProducts(filters, currentPage, 6);
+
+        setProducts((prev) =>
+          reset ? newProducts : [...prev, ...newProducts]
+        );
+        setHasMore(newHasMore);
+        setError(null);
+      } catch (err) {
+        setError(
+          err instanceof Error ? err.message : "Failed to load products"
+        );
+      } finally {
+        setLoading(false);
+        loadingRef.current = false;
+      }
+    },
+    [filters]
+  );
+
+  // Initial load
   useEffect(() => {
-    let intervalId: NodeJS.Timeout;
+    loadProducts(0, true);
+    loadAllProducts();
+  }, [loadProducts, loadAllProducts]);
 
-    if (autoRefresh) {
-      setToastMessage("Auto-refreshing prices...");
-      setShowToast(true);
-      setTimeout(() => setShowToast(false), 2000);
+  // Setup scroll event listener
+  useEffect(() => {
+    const container = containerRef.current;
+    if (!container) return;
 
-      intervalId = setInterval(async () => {
-        try {
-          setIsLoading(true);
-          const fetchedProducts = await api.getProducts();
-
-          // Compare prices and highlight changes
-          setProducts((prevProducts) => {
-            return fetchedProducts.map((newProduct) => {
-              const prevProduct = prevProducts.find(
-                (p) => p.id === newProduct.id
-              );
-              if (prevProduct && prevProduct.price !== newProduct.price) {
-                // Show price change toast
-                const priceDiff = newProduct.price - prevProduct.price;
-                const changePercent = (
-                  (priceDiff / prevProduct.price) *
-                  100
-                ).toFixed(1);
-                setToastMessage(
-                  `${newProduct.name}: ${
-                    priceDiff > 0 ? "+" : ""
-                  }${changePercent}%`
-                );
-                setShowToast(true);
-                setTimeout(() => setShowToast(false), 2000);
-              }
-              return newProduct;
-            });
-          });
-
-          setCategories(
-            Array.from(new Set(fetchedProducts.map((p) => p.category)))
-          );
-        } catch (error) {
-          setToastMessage("Failed to refresh products");
-          setShowToast(true);
-          setTimeout(() => setShowToast(false), 2000);
-        } finally {
-          setIsLoading(false);
-        }
-      }, 5000);
-    }
-
-    return () => {
-      if (intervalId) clearInterval(intervalId);
+    const handleScroll = () => {
+      if (
+        container.scrollHeight - container.scrollTop <=
+          container.clientHeight + 100 &&
+        hasMore &&
+        !loading
+      ) {
+        setPage((prev) => prev + 1);
+      }
     };
-  }, [autoRefresh]);
 
+    container.addEventListener("scroll", handleScroll);
+    return () => container.removeEventListener("scroll", handleScroll);
+  }, [hasMore, loading]);
+
+  // Load more products when page changes
   useEffect(() => {
-    loadProducts();
-  }, [filters, sortBy, sortOrder]);
+    if (page > 0) {
+      loadProducts(page);
+    }
+  }, [page, loadProducts]);
+
+  // Reset pagination when filters change
+  useEffect(() => {
+    setPage(0);
+    loadProducts(0, true);
+  }, [filters, loadProducts]);
 
   const statistics = useMemo(() => {
     if (products.length === 0) return null;
@@ -145,67 +131,46 @@ export default function Home() {
     };
   }, [products]);
 
-  const paginatedProducts = useMemo(() => {
-    const startIndex = (currentPage - 1) * itemsPerPage;
-    return products.slice(startIndex, startIndex + itemsPerPage);
-  }, [products, currentPage, itemsPerPage]);
-
-  const totalPages = useMemo(
-    () => Math.ceil(products.length / itemsPerPage),
-    [products, itemsPerPage]
-  );
-
-  const handleAddProduct = async (product: Omit<Product, "id">) => {
+  const handleCreateProduct = async (product: Omit<Product, "id">) => {
     try {
-      const newProduct = await api.createProduct(product);
-      setProducts((prev) => [...prev, newProduct]);
-      setCategories((prev) => Array.from(new Set([...prev, product.category])));
-      setToastMessage("Product added successfully");
-      setShowToast(true);
-      setTimeout(() => setShowToast(false), 3000);
+      setError(null);
+      const newProduct = await productService.createProduct(product);
+      setProducts((prev) => [newProduct, ...prev]);
       setShowForm(false);
-    } catch (error) {
-      setToastMessage("Failed to add product");
-      setShowToast(true);
-      setTimeout(() => setShowToast(false), 3000);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to create product");
     }
   };
 
-  const handleUpdateProduct = async (product: Omit<Product, "id">) => {
-    if (!editingProduct) return;
-
+  const handleUpdateProduct = async (
+    product: Omit<Product, "id"> & { id?: number }
+  ) => {
     try {
-      const updatedProduct = await api.updateProduct(editingProduct.id, {
+      setError(null);
+      if (!editingProduct?.id) {
+        throw new Error("Product ID is required for update");
+      }
+      const updatedProduct = await productService.updateProduct({
         ...product,
         id: editingProduct.id,
       });
       setProducts((prev) =>
-        prev.map((p) => (p.id === editingProduct.id ? updatedProduct : p))
+        prev.map((p) => (p.id === updatedProduct.id ? updatedProduct : p))
       );
-      setCategories((prev) => Array.from(new Set([...prev, product.category])));
-      setToastMessage("Product updated successfully");
-      setShowToast(true);
-      setTimeout(() => setShowToast(false), 3000);
-      setEditingProduct(null);
       setShowForm(false);
-    } catch (error) {
-      setToastMessage("Failed to update product");
-      setShowToast(true);
-      setTimeout(() => setShowToast(false), 3000);
+      setEditingProduct(null);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to update product");
     }
   };
 
   const handleDeleteProduct = async (id: number) => {
     try {
-      await api.deleteProduct(id);
+      setError(null);
+      await productService.deleteProduct(id);
       setProducts((prev) => prev.filter((p) => p.id !== id));
-      setToastMessage("Product deleted successfully");
-      setShowToast(true);
-      setTimeout(() => setShowToast(false), 3000);
-    } catch (error) {
-      setToastMessage("Failed to delete product");
-      setShowToast(true);
-      setTimeout(() => setShowToast(false), 3000);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to delete product");
     }
   };
 
@@ -219,289 +184,101 @@ export default function Home() {
   };
 
   return (
-    <div className="min-h-screen bg-gray-100">
-      <div className="max-w-7xl mx-auto py-6 sm:px-6 lg:px-8">
-        <div className="px-4 py-6 sm:px-0">
-          <div className="flex justify-between items-center mb-8">
-            <h1 className="text-3xl font-bold text-gray-900">Our Products</h1>
-            <div className="flex gap-4">
-              <button
-                onClick={() => setAutoRefresh(!autoRefresh)}
-                className={`px-4 py-2 rounded-md ${
-                  autoRefresh
-                    ? "bg-red-600 hover:bg-red-700 text-white"
-                    : "bg-green-600 hover:bg-green-700 text-white"
-                }`}
-              >
-                {autoRefresh ? "Stop Auto-Refresh" : "Start Auto-Refresh"}
-              </button>
-              <button
-                onClick={() => {
-                  setEditingProduct(null);
-                  setShowForm(true);
-                  setValidationErrors([]);
-                }}
-                className="bg-blue-600 text-white px-4 py-2 rounded-md hover:bg-blue-700"
-              >
-                Add New Product
-              </button>
-            </div>
-          </div>
+    <div className="container mx-auto px-4 py-8">
+      <StatusIndicator />
+      <h1 className="text-3xl font-bold mb-8">Product Management</h1>
 
-          {/* Loading indicator */}
-          {isLoading && (
-            <div className="fixed top-0 left-0 w-full h-1 bg-blue-200">
-              <div
-                className="h-full bg-blue-600 animate-pulse"
-                style={{ width: "100%" }}
-              ></div>
-            </div>
-          )}
+      {error && (
+        <div className="bg-red-100 border border-red-400 text-red-700 px-4 py-3 rounded mb-4">
+          {error}
+        </div>
+      )}
 
-          {/* Add Charts component */}
-          <ProductCharts products={products} />
+      <div className="flex justify-between items-center mb-8">
+        <button
+          onClick={() => {
+            setEditingProduct(null);
+            setShowForm(true);
+          }}
+          className="bg-blue-600 text-white px-4 py-2 rounded-md hover:bg-blue-700"
+        >
+          Add New Product
+        </button>
+        <FileUpload
+          onUploadSuccess={() => {
+            setError(null);
+          }}
+          onUploadError={(error) => {
+            setError(error);
+          }}
+        />
+      </div>
 
-          {/* Statistics Summary */}
-          {statistics && (
-            <div className="bg-white p-4 rounded-lg shadow-sm mb-6">
-              <h2 className="text-lg font-semibold mb-2">Product Statistics</h2>
-              <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-                <div className="border p-3 rounded bg-green-50">
-                  <p className="text-sm font-medium">Most Expensive</p>
-                  <p className="text-xl font-bold text-green-700">
-                    ${statistics.maxPrice.toFixed(2)}
-                  </p>
-                </div>
-                <div className="border p-3 rounded bg-blue-50">
-                  <p className="text-sm font-medium">Average Price</p>
-                  <p className="text-xl font-bold text-blue-700">
-                    ${statistics.avgPrice.toFixed(2)}
-                  </p>
-                </div>
-                <div className="border p-3 rounded bg-red-50">
-                  <p className="text-sm font-medium">Least Expensive</p>
-                  <p className="text-xl font-bold text-red-700">
-                    ${statistics.minPrice.toFixed(2)}
-                  </p>
-                </div>
-              </div>
-              <p className="text-xs text-gray-500 mt-2">
-                * Products are highlighted in the list according to these
-                statistics
-              </p>
+      {showForm && (
+        <div className="bg-white p-6 rounded-lg shadow-md mb-8">
+          {validationErrors.length > 0 && (
+            <div className="mb-4 p-4 bg-red-50 rounded-md">
+              <h3 className="text-sm font-medium text-red-800">
+                Please fix the following errors:
+              </h3>
+              <ul className="mt-2 text-sm text-red-700">
+                {validationErrors.map((error, index) => (
+                  <li key={index}>{error.message}</li>
+                ))}
+              </ul>
             </div>
           )}
+          <ProductForm
+            onSubmit={
+              editingProduct ? handleUpdateProduct : handleCreateProduct
+            }
+            initialData={editingProduct || undefined}
+            onCancel={() => {
+              setShowForm(false);
+              setEditingProduct(null);
+              setValidationErrors([]);
+            }}
+          />
+        </div>
+      )}
 
-          {/* Filters and Sorting */}
-          <div className="bg-white p-4 rounded-lg shadow-sm mb-6">
-            <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
-              <div>
-                <label className="block text-sm font-medium text-gray-700">
-                  Category
-                </label>
-                <select
-                  className="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500"
-                  value={filters.category || ""}
-                  onChange={(e) =>
-                    setFilters({
-                      ...filters,
-                      category: e.target.value || undefined,
-                    })
-                  }
-                >
-                  <option value="">All Categories</option>
-                  {categories.map((category) => (
-                    <option key={category} value={category}>
-                      {category}
-                    </option>
-                  ))}
-                </select>
-              </div>
-              <div>
-                <label className="block text-sm font-medium text-gray-700">
-                  Min Price
-                </label>
-                <input
-                  type="number"
-                  className="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500"
-                  value={filters.minPrice || ""}
-                  onChange={(e) =>
-                    setFilters({
-                      ...filters,
-                      minPrice: e.target.value
-                        ? Number(e.target.value)
-                        : undefined,
-                    })
-                  }
-                />
-              </div>
-              <div>
-                <label className="block text-sm font-medium text-gray-700">
-                  Max Price
-                </label>
-                <input
-                  type="number"
-                  className="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500"
-                  value={filters.maxPrice || ""}
-                  onChange={(e) =>
-                    setFilters({
-                      ...filters,
-                      maxPrice: e.target.value
-                        ? Number(e.target.value)
-                        : undefined,
-                    })
-                  }
-                />
-              </div>
-              <div>
-                <label className="block text-sm font-medium text-gray-700">
-                  Search
-                </label>
-                <input
-                  type="text"
-                  className="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500"
-                  value={filters.searchTerm || ""}
-                  onChange={(e) =>
-                    setFilters({
-                      ...filters,
-                      searchTerm: e.target.value || undefined,
-                    })
-                  }
-                  placeholder="Search products..."
-                />
-              </div>
-            </div>
-            <div className="mt-4 flex gap-4">
-              <div>
-                <label className="block text-sm font-medium text-gray-700">
-                  Sort By
-                </label>
-                <select
-                  className="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500"
-                  value={sortBy || ""}
-                  onChange={(e) =>
-                    setSortBy((e.target.value as keyof Product) || undefined)
-                  }
-                >
-                  <option value="">None</option>
-                  <option value="name">Name</option>
-                  <option value="price">Price</option>
-                  <option value="category">Category</option>
-                </select>
-              </div>
-              <div>
-                <label className="block text-sm font-medium text-gray-700">
-                  Sort Order
-                </label>
-                <select
-                  className="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500"
-                  value={sortOrder}
-                  onChange={(e) =>
-                    setSortOrder(e.target.value as "asc" | "desc")
-                  }
-                >
-                  <option value="asc">Ascending</option>
-                  <option value="desc">Descending</option>
-                </select>
-              </div>
-            </div>
-          </div>
+      {loading && products.length === 0 ? (
+        <div className="flex justify-center items-center h-64">
+          <div className="text-gray-600">Loading products...</div>
+        </div>
+      ) : (
+        <>
+          <ProductCharts products={allProducts} />
 
-          {showForm && (
-            <div className="bg-white p-6 rounded-lg shadow-md mb-8">
-              {validationErrors.length > 0 && (
-                <div className="mb-4 p-4 bg-red-50 rounded-md">
-                  <h3 className="text-sm font-medium text-red-800">
-                    Please fix the following errors:
-                  </h3>
-                  <ul className="mt-2 text-sm text-red-700">
-                    {validationErrors.map((error, index) => (
-                      <li key={index}>{error.message}</li>
-                    ))}
-                  </ul>
+          <div className="mt-8">
+            <div ref={containerRef} className="h-[600px] overflow-y-auto">
+              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+                {products.map((product) => (
+                  <div key={product.id}>
+                    <ProductCard
+                      product={product}
+                      onDelete={handleDeleteProduct}
+                      onEdit={() => {
+                        setEditingProduct(product);
+                        setShowForm(true);
+                      }}
+                    />
+                  </div>
+                ))}
+              </div>
+
+              {loading && products.length > 0 && (
+                <div className="flex justify-center items-center h-20">
+                  <div className="text-gray-600">Loading more products...</div>
                 </div>
               )}
-              <ProductForm
-                onSubmit={
-                  editingProduct ? handleUpdateProduct : handleAddProduct
-                }
-                initialData={editingProduct || undefined}
-                onCancel={() => {
-                  setShowForm(false);
-                  setEditingProduct(null);
-                  setValidationErrors([]);
-                }}
-              />
             </div>
-          )}
-
-          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-6">
-            {paginatedProducts.map((product) => (
-              <ProductCard
-                key={product.id}
-                {...product}
-                onDelete={handleDeleteProduct}
-                onEdit={handleEditProduct}
-                isHighestPrice={statistics?.maxPriceProduct === product.id}
-                isLowestPrice={statistics?.minPriceProduct === product.id}
-                isAveragePrice={statistics?.avgPriceProduct === product.id}
-              />
-            ))}
           </div>
+        </>
+      )}
 
-          {products.length === 0 && (
-            <div className="text-center py-12">
-              <p className="text-gray-500">
-                No products found matching your criteria.
-              </p>
-            </div>
-          )}
-
-          {/* Pagination */}
-          {totalPages > 1 && (
-            <div className="flex justify-center mt-8">
-              <nav className="flex items-center">
-                <button
-                  onClick={() =>
-                    setCurrentPage((prev) => Math.max(prev - 1, 1))
-                  }
-                  disabled={currentPage === 1}
-                  className="px-3 py-1 rounded-md mr-2 bg-white border disabled:opacity-50"
-                >
-                  Previous
-                </button>
-                <div className="flex space-x-1">
-                  {Array.from({ length: totalPages }, (_, i) => i + 1).map(
-                    (page) => (
-                      <button
-                        key={page}
-                        onClick={() => setCurrentPage(page)}
-                        className={`px-3 py-1 rounded-md ${
-                          currentPage === page
-                            ? "bg-blue-600 text-white"
-                            : "bg-white"
-                        }`}
-                      >
-                        {page}
-                      </button>
-                    )
-                  )}
-                </div>
-                <button
-                  onClick={() =>
-                    setCurrentPage((prev) => Math.min(prev + 1, totalPages))
-                  }
-                  disabled={currentPage === totalPages}
-                  className="px-3 py-1 rounded-md ml-2 bg-white border disabled:opacity-50"
-                >
-                  Next
-                </button>
-              </nav>
-            </div>
-          )}
-
-          <Toast message={toastMessage} isVisible={showToast} />
-        </div>
+      <div className="container mx-auto px-4 py-8">
+        <FileManager />
       </div>
     </div>
   );

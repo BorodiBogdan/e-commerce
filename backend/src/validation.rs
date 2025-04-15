@@ -6,6 +6,7 @@ use std::fmt;
 pub enum ValidationError {
     NegativePrice,
     NameTooShort,
+    DescriptionTooShort,
 }
 
 impl fmt::Display for ValidationError {
@@ -13,6 +14,7 @@ impl fmt::Display for ValidationError {
         match self {
             ValidationError::NegativePrice => write!(f, "Price cannot be negative"),
             ValidationError::NameTooShort => write!(f, "Name must be at least 10 characters long"),
+            ValidationError::DescriptionTooShort => write!(f, "Description must be at least 10 characters long"),
         }
     }
 }
@@ -26,6 +28,9 @@ impl ResponseError for ValidationError {
             ValidationError::NameTooShort => HttpResponse::BadRequest().json(serde_json::json!({
                 "error": "Name must be at least 10 characters long"
             })),
+            ValidationError::DescriptionTooShort => HttpResponse::BadRequest().json(serde_json::json!({
+                "error": "Description must be at least 10 characters long"
+            })),
         }
     }
 }
@@ -37,6 +42,10 @@ pub fn validate_product(product: &CreateProductRequest) -> Result<(), Validation
     
     if product.name.len() < 10 {
         return Err(ValidationError::NameTooShort);
+    }
+    
+    if product.description.len() < 10 {
+        return Err(ValidationError::DescriptionTooShort);
     }
     
     Ok(())
