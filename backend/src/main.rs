@@ -155,13 +155,7 @@ async fn get_products(data: web::Data<AppState>, query: web::Query<ProductQuery>
         Vec::new()
     };
 
-    // Simulate price changes for each product
-    let mut products_with_price_changes = paginated_products;
-    for product in products_with_price_changes.iter_mut() {
-        product.price = simulate_price_change(product.price);
-    }
-
-    HttpResponse::Ok().json(products_with_price_changes)
+    HttpResponse::Ok().json(paginated_products)
 }
 
 async fn get_product(data: web::Data<AppState>, id: web::Path<i32>) -> impl Responder {

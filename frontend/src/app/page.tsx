@@ -110,30 +110,6 @@ export default function Home() {
     loadProducts(0, true);
   }, [filters, loadProducts]);
 
-  const statistics = useMemo(() => {
-    if (products.length === 0) return null;
-
-    const prices = products.map((p) => p.price);
-    const maxPrice = Math.max(...prices);
-    const minPrice = Math.min(...prices);
-    const avgPrice =
-      prices.reduce((sum, price) => sum + price, 0) / prices.length;
-
-    return {
-      maxPrice,
-      minPrice,
-      avgPrice,
-      maxPriceProduct: products.find((p) => p.price === maxPrice)?.id,
-      minPriceProduct: products.find((p) => p.price === minPrice)?.id,
-      avgPriceProduct: products.reduce((closest, product) => {
-        return Math.abs(product.price - avgPrice) <
-          Math.abs(closest.price - avgPrice)
-          ? product
-          : closest;
-      }, products[0]).id,
-    };
-  }, [products]);
-
   const showNotification = useCallback((message: string) => {
     setToastMessage(message);
     setShowToast(true);
@@ -278,39 +254,31 @@ export default function Home() {
           <div className="text-gray-600">Loading products...</div>
         </div>
       ) : (
-        <>
-          <ProductCharts products={allProducts} />
-
-          <div className="mt-8">
-            <div ref={containerRef} className="h-[600px] overflow-y-auto">
-              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-                {products.map((product) => (
-                  <div key={product.id}>
-                    <ProductCard
-                      product={product}
-                      onDelete={handleDeleteProduct}
-                      onEdit={() => {
-                        setEditingProduct(product);
-                        setShowForm(true);
-                      }}
-                    />
-                  </div>
-                ))}
-              </div>
-
-              {loading && products.length > 0 && (
-                <div className="flex justify-center items-center h-20">
-                  <div className="text-gray-600">Loading more products...</div>
+        <div className="mt-8">
+          <div ref={containerRef} className="h-[600px] overflow-y-auto">
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+              {products.map((product) => (
+                <div key={product.id}>
+                  <ProductCard
+                    product={product}
+                    onDelete={handleDeleteProduct}
+                    onEdit={() => {
+                      setEditingProduct(product);
+                      setShowForm(true);
+                    }}
+                  />
                 </div>
-              )}
+              ))}
             </div>
-          </div>
-        </>
-      )}
 
-      <div className="container mx-auto px-4 py-8">
-        <FileManager />
-      </div>
+            {loading && products.length > 0 && (
+              <div className="flex justify-center items-center h-20">
+                <div className="text-gray-600">Loading more products...</div>
+              </div>
+            )}
+          </div>
+        </div>
+      )}
     </div>
   );
 }
