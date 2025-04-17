@@ -1,12 +1,9 @@
 import React from "react";
-import { BrowserRouter as Router, Routes, Route } from "react-router-dom";
-import StatusIndicator from "../components/StatusIndicator";
-// ... other imports ...
+import { BrowserRouter as Router, Routes } from "react-router-dom";
 
 const App: React.FC = () => {
   return (
     <Router>
-      <StatusIndicator />
       <Routes>{/* ... existing routes ... */}</Routes>
     </Router>
   );

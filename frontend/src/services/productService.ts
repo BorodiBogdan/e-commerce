@@ -122,23 +122,45 @@ class ProductService {
 
     try {
       const queryParams = new URLSearchParams();
-      Object.entries(filters).forEach(([key, value]) => {
-        if (value !== undefined && value !== "") {
-          queryParams.append(key, value.toString());
-        }
-      });
+
+      // Map frontend filter names to backend parameter names
+      if (filters.category) {
+        queryParams.append("category", filters.category);
+      }
+      if (filters.minPrice !== undefined) {
+        console.log("Sending min_price filter:", filters.minPrice);
+        queryParams.append("min_price", filters.minPrice.toString());
+      }
+      if (filters.maxPrice !== undefined) {
+        console.log("Sending max_price filter:", filters.maxPrice);
+        queryParams.append("max_price", filters.maxPrice.toString());
+      }
+      if (filters.searchTerm) {
+        queryParams.append("search_term", filters.searchTerm);
+      }
+      if (filters.sortBy) {
+        const sortBy = filters.sortBy.toLowerCase();
+        queryParams.append("sort_by", sortBy);
+        console.log("Sorting by:", sortBy);
+      }
+      if (filters.sortOrder) {
+        const sortOrder = filters.sortOrder.toLowerCase();
+        queryParams.append("sort_order", sortOrder);
+        console.log("Sort order:", sortOrder);
+      }
+
       queryParams.append("offset", (page * limit).toString());
       queryParams.append("limit", limit.toString());
 
-      const response = await fetch(
-        `${API_BASE_URL}/products?${queryParams.toString()}`,
-        {
-          headers: {
-            Accept: "application/json",
-            "Content-Type": "application/json",
-          },
-        }
-      );
+      const url = `${API_BASE_URL}/products?${queryParams.toString()}`;
+      console.log("Request URL:", url);
+
+      const response = await fetch(url, {
+        headers: {
+          Accept: "application/json",
+          "Content-Type": "application/json",
+        },
+      });
 
       if (!response.ok) {
         const errorText = await response.text();

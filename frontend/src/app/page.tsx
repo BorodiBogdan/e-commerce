@@ -7,8 +7,9 @@ import ProductCard from "./components/ProductCard";
 import ProductForm from "./components/ProductForm";
 import ProductCharts from "./components/ProductCharts";
 import StatusIndicator from "../components/StatusIndicator";
-import FileUpload from "../components/FileUpload";
 import { FileManager } from "../components/FileManager";
+import Toast from "./components/Toast";
+import { ProductFiltersComponent } from "./components/ProductFilters";
 
 export default function Home() {
   const [products, setProducts] = useState<Product[]>([]);
@@ -25,6 +26,8 @@ export default function Home() {
   );
   const loadingRef = useRef(false);
   const containerRef = useRef<HTMLDivElement>(null);
+  const [toastMessage, setToastMessage] = useState<string>("");
+  const [showToast, setShowToast] = useState(false);
 
   const productService = ProductService.getInstance();
 
@@ -131,61 +134,91 @@ export default function Home() {
     };
   }, [products]);
 
-  const handleCreateProduct = async (product: Omit<Product, "id">) => {
-    try {
-      setError(null);
-      const newProduct = await productService.createProduct(product);
-      setProducts((prev) => [newProduct, ...prev]);
-      setShowForm(false);
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "Failed to create product");
-    }
-  };
+  const showNotification = useCallback((message: string) => {
+    setToastMessage(message);
+    setShowToast(true);
+    setTimeout(() => setShowToast(false), 3000);
+  }, []);
 
-  const handleUpdateProduct = async (
-    product: Omit<Product, "id"> & { id?: number }
-  ) => {
-    try {
-      setError(null);
-      if (!editingProduct?.id) {
-        throw new Error("Product ID is required for update");
+  const handleCreateProduct = useCallback(
+    async (product: Omit<Product, "id">) => {
+      try {
+        setError(null);
+        const newProduct = await productService.createProduct(product);
+        setProducts((prev) => [newProduct, ...prev]);
+        setShowForm(false);
+        showNotification("Product created successfully");
+      } catch (err) {
+        setError(
+          err instanceof Error ? err.message : "Failed to create product"
+        );
       }
-      const updatedProduct = await productService.updateProduct({
-        ...product,
-        id: editingProduct.id,
-      });
-      setProducts((prev) =>
-        prev.map((p) => (p.id === updatedProduct.id ? updatedProduct : p))
-      );
-      setShowForm(false);
-      setEditingProduct(null);
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "Failed to update product");
-    }
-  };
+    },
+    [showNotification]
+  );
 
-  const handleDeleteProduct = async (id: number) => {
-    try {
-      setError(null);
-      await productService.deleteProduct(id);
-      setProducts((prev) => prev.filter((p) => p.id !== id));
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "Failed to delete product");
-    }
-  };
+  const handleUpdateProduct = useCallback(
+    async (product: Omit<Product, "id"> & { id?: number }) => {
+      try {
+        setError(null);
+        if (!editingProduct?.id) {
+          throw new Error("Product ID is required for update");
+        }
+        const updatedProduct = await productService.updateProduct({
+          ...product,
+          id: editingProduct.id,
+        });
+        setProducts((prev) =>
+          prev.map((p) => (p.id === updatedProduct.id ? updatedProduct : p))
+        );
+        setShowForm(false);
+        setEditingProduct(null);
+        showNotification("Product updated successfully");
+      } catch (err) {
+        setError(
+          err instanceof Error ? err.message : "Failed to update product"
+        );
+      }
+    },
+    [editingProduct, showNotification]
+  );
 
-  const handleEditProduct = (id: number) => {
-    const product = products.find((p) => p.id === id);
-    if (product) {
-      setEditingProduct(product);
-      setShowForm(true);
-      setValidationErrors([]);
-    }
-  };
+  const handleDeleteProduct = useCallback(
+    async (id: number) => {
+      try {
+        setError(null);
+        await productService.deleteProduct(id);
+        setProducts((prev) => prev.filter((p) => p.id !== id));
+        showNotification("Product deleted successfully");
+      } catch (err) {
+        setError(
+          err instanceof Error ? err.message : "Failed to delete product"
+        );
+      }
+    },
+    [showNotification]
+  );
+
+  // Extract unique categories from all products
+  const categories = useMemo(() => {
+    const uniqueCategories = new Set<string>();
+    allProducts.forEach((product) => {
+      if (product.category) {
+        uniqueCategories.add(product.category);
+      }
+    });
+    return Array.from(uniqueCategories).sort();
+  }, [allProducts]);
+
+  const handleFiltersChange = useCallback((newFilters: ProductFilters) => {
+    setFilters(newFilters);
+    setPage(0); // Reset pagination when filters change
+  }, []);
 
   return (
     <div className="container mx-auto px-4 py-8">
       <StatusIndicator />
+      <Toast message={toastMessage} isVisible={showToast} />
       <h1 className="text-3xl font-bold mb-8">Product Management</h1>
 
       {error && (
@@ -204,15 +237,13 @@ export default function Home() {
         >
           Add New Product
         </button>
-        <FileUpload
-          onUploadSuccess={() => {
-            setError(null);
-          }}
-          onUploadError={(error) => {
-            setError(error);
-          }}
-        />
       </div>
+
+      <ProductFiltersComponent
+        filters={filters}
+        onFiltersChange={handleFiltersChange}
+        categories={categories}
+      />
 
       {showForm && (
         <div className="bg-white p-6 rounded-lg shadow-md mb-8">

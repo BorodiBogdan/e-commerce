@@ -12,6 +12,8 @@ use std::io::Write;
 use actix_web::web::Bytes;
 use std::path::PathBuf;
 use std::sync::Arc;
+use tokio::time::{sleep, Duration};
+use std::sync::atomic::{AtomicBool, Ordering};
 
 mod models;
 mod mock_data;
@@ -20,8 +22,11 @@ mod validation;
 mod tests;
 
 // Global state to store products
+
+// Shared state to control product generation
 pub struct AppState {
     products: Mutex<Vec<Product>>,
+    is_generating: Arc<AtomicBool>, // New field to track generation state
 }
 
 fn simulate_price_change(price: f64) -> f64 {
@@ -39,11 +44,17 @@ fn filter_and_sort_products(products: &[Product], query: &ProductQuery) -> Vec<P
     }
 
     if let Some(min_price) = query.min_price {
+        println!("Filtering by min_price: {}", min_price);
+        let before_count = filtered.len();
         filtered.retain(|p| p.price >= min_price);
+        println!("Products after min_price filter: {} -> {}", before_count, filtered.len());
     }
 
     if let Some(max_price) = query.max_price {
+        println!("Filtering by max_price: {}", max_price);
+        let before_count = filtered.len();
         filtered.retain(|p| p.price <= max_price);
+        println!("Products after max_price filter: {} -> {}", before_count, filtered.len());
     }
 
     if let Some(search_term) = &query.search_term {
@@ -57,6 +68,7 @@ fn filter_and_sort_products(products: &[Product], query: &ProductQuery) -> Vec<P
 
     // Apply sorting
     if let Some(sort_by) = &query.sort_by {
+        println!("Sorting by: {}, order: {:?}", sort_by, query.sort_order);
         let sort_order = query.sort_order.as_deref().unwrap_or("asc");
         filtered.sort_by(|a, b| {
             let comparison = match sort_by.as_str() {
@@ -74,6 +86,58 @@ fn filter_and_sort_products(products: &[Product], query: &ProductQuery) -> Vec<P
     }
 
     filtered
+}
+
+fn generate_random_product(id: i32) -> Product {
+    let mut rng = rand::thread_rng();
+    let categories = vec!["Electronics", "Books", "Clothing", "Home", "Toys"];
+    let category = categories[rng.gen_range(0..categories.len())].to_string();
+
+    Product {
+        id,
+        name: format!("Product-{}", id),
+        price: rng.gen_range(10.0..500.0), // Random price between 10 and 500
+        image: format!("/images/product-{}.jpg", id),
+        description: format!("This is a description for Product-{}", id),
+        category,
+    }
+}
+
+// Function to generate products periodically
+async fn generate_products_periodically(app_state: web::Data<AppState>) {
+    let mut id_counter = app_state.products.lock().unwrap().iter().map(|p| p.id).max().unwrap_or(0) + 1;
+
+    while app_state.is_generating.load(Ordering::Relaxed) {
+        {
+            let mut products = app_state.products.lock().unwrap();
+            let new_product = generate_random_product(id_counter);
+            id_counter += 1;
+            products.push(new_product);
+        }
+        println!("Generated a new product.");
+        sleep(Duration::from_secs(3)).await;
+    }
+    println!("Stopped generating products.");
+}
+
+// API endpoint to toggle product generation
+async fn toggle_generation(
+    app_state: web::Data<AppState>,
+    state: web::Json<bool>,
+) -> impl Responder {
+    app_state.is_generating.store(*state, Ordering::Relaxed);
+
+    if *state {
+        let app_state_clone = app_state.clone();
+        tokio::spawn(async move {
+            generate_products_periodically(app_state_clone).await;
+        });
+    }
+
+    HttpResponse::Ok().json(serde_json::json!({
+        "status": "success",
+        "is_generating": *state
+    }))
 }
 
 async fn get_products(data: web::Data<AppState>, query: web::Query<ProductQuery>) -> impl Responder {
@@ -315,6 +379,7 @@ async fn main() -> std::io::Result<()> {
     // Initialize the app state with mock data
     let app_state = web::Data::new(AppState {
         products: Mutex::new(mock_data::init_mock_data()),
+        is_generating: Arc::new(AtomicBool::new(false)), // Initially set to false
     });
 
     println!("Server running at http://localhost:3001");
@@ -337,6 +402,7 @@ async fn main() -> std::io::Result<()> {
             .route("/api/upload", web::post().to(upload_file))
             .route("/api/download/{filename}", web::get().to(download_file))
             .route("/api/files", web::get().to(list_files))
+            .route("/api/toggle-generation", web::post().to(toggle_generation))
             .service(web::resource("/api/health").route(web::get().to(health_check)))
     })
     .bind("127.0.0.1:3001")?
