@@ -10,6 +10,7 @@ import StatusIndicator from "../components/StatusIndicator";
 import { FileManager } from "../components/FileManager";
 import Toast from "./components/Toast";
 import { ProductFiltersComponent } from "./components/ProductFilters";
+import WebSocketService from "../services/websocketService";
 
 export default function Home() {
   const [products, setProducts] = useState<Product[]>([]);
@@ -28,6 +29,7 @@ export default function Home() {
   const containerRef = useRef<HTMLDivElement>(null);
   const [toastMessage, setToastMessage] = useState<string>("");
   const [showToast, setShowToast] = useState(false);
+  const [isGenerating, setIsGenerating] = useState(false);
 
   const productService = ProductService.getInstance();
 
@@ -191,6 +193,49 @@ export default function Home() {
     setPage(0); // Reset pagination when filters change
   }, []);
 
+  // Initialize WebSocket connection
+  useEffect(() => {
+    const wsService = WebSocketService.getInstance();
+    wsService.connect();
+
+    const handleNewProduct = (product: Product) => {
+      setProducts((prevProducts) => [...prevProducts, product]);
+      showNotification(`New product added: ${product.name}`);
+    };
+
+    wsService.addListener(handleNewProduct);
+
+    return () => {
+      wsService.removeListener(handleNewProduct);
+      wsService.disconnect();
+    };
+  }, []);
+
+  // Toggle product generation
+  const toggleGeneration = async () => {
+    try {
+      const response = await fetch(
+        "http://localhost:3001/api/toggle-generation",
+        {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify(!isGenerating),
+        }
+      );
+
+      if (response.ok) {
+        setIsGenerating(!isGenerating);
+        showNotification(
+          `Product generation ${!isGenerating ? "started" : "stopped"}`
+        );
+      }
+    } catch (error) {
+      console.error("Error toggling product generation:", error);
+    }
+  };
+
   return (
     <div className="container mx-auto px-4 py-8">
       <StatusIndicator />
@@ -212,6 +257,16 @@ export default function Home() {
           className="bg-blue-600 text-white px-4 py-2 rounded-md hover:bg-blue-700"
         >
           Add New Product
+        </button>
+        <button
+          onClick={toggleGeneration}
+          className={`px-4 py-2 rounded ${
+            isGenerating
+              ? "bg-red-500 hover:bg-red-600"
+              : "bg-green-500 hover:bg-green-600"
+          } text-white`}
+        >
+          {isGenerating ? "Stop Generation" : "Start Generation"}
         </button>
       </div>
 

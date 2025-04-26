@@ -1,6 +1,6 @@
 use actix_cors::Cors;
 use actix_web::{web, App, HttpResponse, HttpServer, Responder};
-use std::sync::Mutex;
+use std::sync::{Arc, Mutex};
 use rand::Rng;
 use models::{Product, CreateProductRequest, ProductQuery};
 use actix_web::ResponseError;
@@ -11,9 +11,13 @@ use std::fs;
 use std::io::Write;
 use actix_web::web::Bytes;
 use std::path::PathBuf;
-use std::sync::Arc;
 use tokio::time::{sleep, Duration};
+use tokio::sync::broadcast;
 use std::sync::atomic::{AtomicBool, Ordering};
+use actix_web_actors::ws;
+use actix::{Actor, StreamHandler, Handler, AsyncContext, Message, MessageResponse};
+use actix_web_actors::ws::WebsocketContext;
+use bytestring::ByteString;
 
 mod models;
 mod mock_data;
@@ -21,73 +25,68 @@ mod validation;
 #[cfg(test)]
 mod tests;
 
-// Global state to store products
-
-// Shared state to control product generation
-pub struct AppState {
-    products: Mutex<Vec<Product>>,
-    is_generating: Arc<AtomicBool>, // New field to track generation state
+// WebSocket actor
+struct ProductWs {
+    product_rx: broadcast::Receiver<Product>,
 }
 
-fn simulate_price_change(price: f64) -> f64 {
-    let mut rng = rand::thread_rng();
-    let change_percentage = rng.gen_range(-5.0..=5.0); // Random change between -5% and +5%
-    price * (1.0 + change_percentage / 100.0)
+// Message wrapper for Product
+struct ProductMessage(Product);
+
+impl Message for ProductMessage {
+    type Result = ();
 }
 
-fn filter_and_sort_products(products: &[Product], query: &ProductQuery) -> Vec<Product> {
-    let mut filtered = products.to_vec();
+impl Actor for ProductWs {
+    type Context = WebsocketContext<Self>;
 
-    // Apply filters
-    if let Some(category) = &query.category {
-        filtered.retain(|p| p.category == *category);
-    }
-
-    if let Some(min_price) = query.min_price {
-        println!("Filtering by min_price: {}", min_price);
-        let before_count = filtered.len();
-        filtered.retain(|p| p.price >= min_price);
-        println!("Products after min_price filter: {} -> {}", before_count, filtered.len());
-    }
-
-    if let Some(max_price) = query.max_price {
-        println!("Filtering by max_price: {}", max_price);
-        let before_count = filtered.len();
-        filtered.retain(|p| p.price <= max_price);
-        println!("Products after max_price filter: {} -> {}", before_count, filtered.len());
-    }
-
-    if let Some(search_term) = &query.search_term {
-        let search_term = search_term.to_lowercase();
-        filtered.retain(|p| {
-            p.name.to_lowercase().contains(&search_term) ||
-            p.description.to_lowercase().contains(&search_term) ||
-            p.category.to_lowercase().contains(&search_term)
-        });
-    }
-
-    // Apply sorting
-    if let Some(sort_by) = &query.sort_by {
-        println!("Sorting by: {}, order: {:?}", sort_by, query.sort_order);
-        let sort_order = query.sort_order.as_deref().unwrap_or("asc");
-        filtered.sort_by(|a, b| {
-            let comparison = match sort_by.as_str() {
-                "name" => a.name.cmp(&b.name),
-                "price" => a.price.partial_cmp(&b.price).unwrap_or(std::cmp::Ordering::Equal),
-                "category" => a.category.cmp(&b.category),
-                _ => std::cmp::Ordering::Equal,
-            };
-            if sort_order == "desc" {
-                comparison.reverse()
-            } else {
-                comparison
+    fn started(&mut self, ctx: &mut Self::Context) {
+        println!("New WebSocket client connected: {:?}", ctx.address());
+        
+        // Start listening for new products
+        let addr = ctx.address();
+        let mut rx = self.product_rx.resubscribe();
+        
+        actix_rt::spawn(async move {
+            while let Ok(product) = rx.recv().await {
+                addr.do_send(ProductMessage(product));
             }
         });
     }
 
-    filtered
+    fn stopping(&mut self, ctx: &mut Self::Context) -> actix::Running {
+        println!("WebSocket client disconnected: {:?}", ctx.address());
+        actix::Running::Stop
+    }
 }
 
+impl StreamHandler<Result<ws::Message, ws::ProtocolError>> for ProductWs {
+    fn handle(&mut self, msg: Result<ws::Message, ws::ProtocolError>, ctx: &mut Self::Context) {
+        match msg {
+            Ok(ws::Message::Ping(msg)) => ctx.pong(&msg),
+            Ok(ws::Message::Text(text)) => ctx.text(text),
+            Ok(ws::Message::Binary(bin)) => ctx.binary(bin),
+            _ => (),
+        }
+    }
+}
+
+impl Handler<ProductMessage> for ProductWs {
+    type Result = ();
+
+    fn handle(&mut self, msg: ProductMessage, ctx: &mut Self::Context) {
+        ctx.text(ByteString::from(serde_json::to_string(&msg.0).unwrap()));
+    }
+}
+
+// Global state to store products and WebSocket channels
+pub struct AppState {
+    products: Mutex<Vec<Product>>,
+    is_generating: Arc<AtomicBool>,
+    product_tx: broadcast::Sender<Product>,
+}
+
+// Function to generate a random product
 fn generate_random_product(id: i32) -> Product {
     let mut rng = rand::thread_rng();
     let categories = vec!["Electronics", "Books", "Clothing", "Home", "Toys"];
@@ -96,7 +95,7 @@ fn generate_random_product(id: i32) -> Product {
     Product {
         id,
         name: format!("Product-{}", id),
-        price: rng.gen_range(10.0..500.0), // Random price between 10 and 500
+        price: rng.gen_range(10.0..500.0),
         image: format!("/images/product-{}.jpg", id),
         description: format!("This is a description for Product-{}", id),
         category,
@@ -105,19 +104,39 @@ fn generate_random_product(id: i32) -> Product {
 
 // Function to generate products periodically
 async fn generate_products_periodically(app_state: web::Data<AppState>) {
-    let mut id_counter = app_state.products.lock().unwrap().iter().map(|p| p.id).max().unwrap_or(0) + 1;
+    let mut id_counter = app_state.products.lock().unwrap().iter().map(|p| p.id).max().unwrap_or(0) + 100;
 
     while app_state.is_generating.load(Ordering::Relaxed) {
         {
             let mut products = app_state.products.lock().unwrap();
             let new_product = generate_random_product(id_counter);
             id_counter += 1;
-            products.push(new_product);
+            products.push(new_product.clone());
+            
+            // Broadcast the new product to all connected WebSocket clients
+            let _ = app_state.product_tx.send(new_product);
         }
         println!("Generated a new product.");
         sleep(Duration::from_secs(3)).await;
     }
     println!("Stopped generating products.");
+}
+
+// WebSocket handler
+async fn product_ws(
+    req: actix_web::HttpRequest,
+    stream: web::Payload,
+    app_state: web::Data<AppState>,
+) -> Result<HttpResponse, actix_web::Error> {
+    let product_rx = app_state.product_tx.subscribe();
+    let ws = ProductWs { product_rx };
+    
+    // Send initial products
+    let products = app_state.products.lock().unwrap().clone();
+    let _initial_msg = ws::Message::Text(ByteString::from(serde_json::to_string(&products).unwrap()));
+    
+    let resp = ws::start(ws, &req, stream)?;
+    Ok(resp)
 }
 
 // API endpoint to toggle product generation
@@ -221,6 +240,66 @@ async fn delete_product(data: web::Data<AppState>, id: web::Path<i32>) -> impl R
         }))
     }
 }
+
+fn simulate_price_change(price: f64) -> f64 {
+    let mut rng = rand::thread_rng();
+    let change_percentage = rng.gen_range(-5.0..=5.0); // Random change between -5% and +5%
+    price * (1.0 + change_percentage / 100.0)
+}
+
+fn filter_and_sort_products(products: &[Product], query: &ProductQuery) -> Vec<Product> {
+    let mut filtered = products.to_vec();
+
+    // Apply filters
+    if let Some(category) = &query.category {
+        filtered.retain(|p| p.category == *category);
+    }
+
+    if let Some(min_price) = query.min_price {
+        println!("Filtering by min_price: {}", min_price);
+        let before_count = filtered.len();
+        filtered.retain(|p| p.price >= min_price);
+        println!("Products after min_price filter: {} -> {}", before_count, filtered.len());
+    }
+
+    if let Some(max_price) = query.max_price {
+        println!("Filtering by max_price: {}", max_price);
+        let before_count = filtered.len();
+        filtered.retain(|p| p.price <= max_price);
+        println!("Products after max_price filter: {} -> {}", before_count, filtered.len());
+    }
+
+    if let Some(search_term) = &query.search_term {
+        let search_term = search_term.to_lowercase();
+        filtered.retain(|p| {
+            p.name.to_lowercase().contains(&search_term) ||
+            p.description.to_lowercase().contains(&search_term) ||
+            p.category.to_lowercase().contains(&search_term)
+        });
+    }
+
+    // Apply sorting
+    if let Some(sort_by) = &query.sort_by {
+        println!("Sorting by: {}, order: {:?}", sort_by, query.sort_order);
+        let sort_order = query.sort_order.as_deref().unwrap_or("asc");
+        filtered.sort_by(|a, b| {
+            let comparison = match sort_by.as_str() {
+                "name" => a.name.cmp(&b.name),
+                "price" => a.price.partial_cmp(&b.price).unwrap_or(std::cmp::Ordering::Equal),
+                "category" => a.category.cmp(&b.category),
+                _ => std::cmp::Ordering::Equal,
+            };
+            if sort_order == "desc" {
+                comparison.reverse()
+            } else {
+                comparison
+            }
+        });
+    }
+
+    filtered
+}
+
 
 async fn upload_file(mut payload: Multipart) -> impl Responder {
     // Create uploads directory if it doesn't exist
@@ -370,10 +449,12 @@ async fn health_check() -> impl Responder {
 
 #[actix_web::main]
 async fn main() -> std::io::Result<()> {
-    // Initialize the app state with mock data
+    // Initialize the app state with mock data and WebSocket channel
+    let (product_tx, _) = broadcast::channel(100);
     let app_state = web::Data::new(AppState {
         products: Mutex::new(mock_data::init_mock_data()),
-        is_generating: Arc::new(AtomicBool::new(false)), // Initially set to false
+        is_generating: Arc::new(AtomicBool::new(false)),
+        product_tx,
     });
 
     println!("Server running at http://localhost:3001");
@@ -388,6 +469,8 @@ async fn main() -> std::io::Result<()> {
         App::new()
             .wrap(cors)
             .app_data(app_state.clone())
+            .route("/ws", web::get().to(product_ws))
+            .route("/api/toggle-generation", web::post().to(toggle_generation))
             .route("/api/products", web::get().to(get_products))
             .route("/api/products", web::post().to(create_product))
             .route("/api/products/{id}", web::get().to(get_product))
@@ -396,8 +479,7 @@ async fn main() -> std::io::Result<()> {
             .route("/api/upload", web::post().to(upload_file))
             .route("/api/download/{filename}", web::get().to(download_file))
             .route("/api/files", web::get().to(list_files))
-            .route("/api/toggle-generation", web::post().to(toggle_generation))
-            .service(web::resource("/api/health").route(web::get().to(health_check)))
+            .route("/api/health", web::get().to(health_check))
     })
     .bind("127.0.0.1:3001")?
     .run()

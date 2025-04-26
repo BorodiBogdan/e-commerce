@@ -371,7 +371,7 @@ pub fn init_mock_data() -> Vec<Product> {
             category: "Clothes".to_string(),
         },
         Product {
-            id: 17,
+            id: 47,
             name: "Nike Air Max 2".to_string(),
             price: 199.99,
             image: "/assets/images/nike.jpg".to_string(),
