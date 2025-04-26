@@ -1,52 +1,40 @@
 use crate::models::CreateProductRequest;
-use actix_web::{HttpResponse, ResponseError};
-use std::fmt;
+use actix_web::HttpResponse;
 
-#[derive(Debug)]
-pub enum ValidationError {
-    NegativePrice,
-    NameTooShort,
-    DescriptionTooShort,
+pub struct ValidationError {
+    message: String,
 }
 
-impl fmt::Display for ValidationError {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            ValidationError::NegativePrice => write!(f, "Price cannot be negative"),
-            ValidationError::NameTooShort => write!(f, "Name must be at least 10 characters long"),
-            ValidationError::DescriptionTooShort => write!(f, "Description must be at least 10 characters long"),
-        }
+impl ValidationError {
+    pub fn new(message: String) -> Self {
+        Self { message }
     }
-}
 
-impl ResponseError for ValidationError {
-    fn error_response(&self) -> HttpResponse {
-        match self {
-            ValidationError::NegativePrice => HttpResponse::BadRequest().json(serde_json::json!({
-                "error": "Price cannot be negative"
-            })),
-            ValidationError::NameTooShort => HttpResponse::BadRequest().json(serde_json::json!({
-                "error": "Name must be at least 10 characters long"
-            })),
-            ValidationError::DescriptionTooShort => HttpResponse::BadRequest().json(serde_json::json!({
-                "error": "Description must be at least 10 characters long"
-            })),
-        }
+    pub fn error_response(&self) -> HttpResponse {
+        HttpResponse::BadRequest().json(serde_json::json!({
+            "error": self.message
+        }))
     }
 }
 
 pub fn validate_product(product: &CreateProductRequest) -> Result<(), ValidationError> {
-    if product.price < 0.0 {
-        return Err(ValidationError::NegativePrice);
+    if product.name.is_empty() {
+        return Err(ValidationError::new("Product name cannot be empty".to_string()));
     }
-    
-    if product.name.len() < 10 {
-        return Err(ValidationError::NameTooShort);
+
+    if product.price <= 0.0 {
+        return Err(ValidationError::new("Product price must be greater than 0".to_string()));
     }
-    
-    if product.description.len() < 10 {
-        return Err(ValidationError::DescriptionTooShort);
+
+    if product.category.is_empty() {
+        return Err(ValidationError::new("Product category cannot be empty".to_string()));
     }
-    
+
+    if let Some(description) = &product.description {
+        if description.len() < 10 {
+            return Err(ValidationError::new("Product description must be at least 10 characters long".to_string()));
+        }
+    }
+
     Ok(())
 }

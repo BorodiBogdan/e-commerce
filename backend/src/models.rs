@@ -2,20 +2,20 @@ use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct Product {
-    pub id: i32,
+    pub id: i64,
     pub name: String,
     pub price: f64,
-    pub image: String,
-    pub description: String,
-    pub category: String,
+    pub image: Option<String>,
+    pub description: Option<String>,
+    pub category: Option<String>,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
 pub struct CreateProductRequest {
     pub name: String,
     pub price: f64,
-    pub image: String,
-    pub description: String,
+    pub image: Option<String>,
+    pub description: Option<String>,
     pub category: String,
 }
 

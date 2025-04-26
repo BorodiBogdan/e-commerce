@@ -1,6 +1,6 @@
 use actix_cors::Cors;
 use actix_web::{web, App, HttpResponse, HttpServer, Responder};
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
 use rand::Rng;
 use models::{Product, CreateProductRequest, ProductQuery};
 use actix_web::ResponseError;
@@ -15,12 +15,14 @@ use tokio::time::{sleep, Duration};
 use tokio::sync::broadcast;
 use std::sync::atomic::{AtomicBool, Ordering};
 use actix_web_actors::ws;
-use actix::{Actor, StreamHandler, Handler, AsyncContext, Message, MessageResponse};
+use actix::{Actor, StreamHandler, Handler, AsyncContext, Message};
 use actix_web_actors::ws::WebsocketContext;
 use bytestring::ByteString;
+use sqlx::sqlite::SqlitePoolOptions;
+use dotenv::dotenv;
+use std::env;
 
 mod models;
-mod mock_data;
 mod validation;
 #[cfg(test)]
 mod tests;
@@ -79,15 +81,15 @@ impl Handler<ProductMessage> for ProductWs {
     }
 }
 
-// Global state to store products and WebSocket channels
+// Global state to store WebSocket channels and database pool
 pub struct AppState {
-    products: Mutex<Vec<Product>>,
     is_generating: Arc<AtomicBool>,
     product_tx: broadcast::Sender<Product>,
+    db_pool: sqlx::SqlitePool,
 }
 
 // Function to generate a random product
-fn generate_random_product(id: i32) -> Product {
+fn generate_random_product(id: i64) -> Product {
     let mut rng = rand::thread_rng();
     let categories = vec!["Electronics", "Books", "Clothing", "Home", "Toys"];
     let category = categories[rng.gen_range(0..categories.len())].to_string();
@@ -96,26 +98,35 @@ fn generate_random_product(id: i32) -> Product {
         id,
         name: format!("Product-{}", id),
         price: rng.gen_range(10.0..500.0),
-        image: format!("/images/product-{}.jpg", id),
-        description: format!("This is a description for Product-{}", id),
-        category,
+        image: Some(format!("/images/product-{}.jpg", id)),
+        description: Some(format!("This is a description for Product-{}", id)),
+        category: Some(category),
     }
 }
 
 // Function to generate products periodically
 async fn generate_products_periodically(app_state: web::Data<AppState>) {
-    let mut id_counter = app_state.products.lock().unwrap().iter().map(|p| p.id).max().unwrap_or(0) + 100;
-
     while app_state.is_generating.load(Ordering::Relaxed) {
-        {
-            let mut products = app_state.products.lock().unwrap();
-            let new_product = generate_random_product(id_counter);
-            id_counter += 1;
-            products.push(new_product.clone());
-            
-            // Broadcast the new product to all connected WebSocket clients
-            let _ = app_state.product_tx.send(new_product);
-        }
+        let new_product = generate_random_product(rand::thread_rng().gen_range(1000..9999));
+        
+        // Insert into database
+        let _ = sqlx::query!(
+            r#"
+            INSERT INTO products (name, price, image, description, category)
+            VALUES (?, ?, ?, ?, ?)
+            "#,
+            new_product.name,
+            new_product.price,
+            new_product.image,
+            new_product.description,
+            new_product.category
+        )
+        .execute(&app_state.db_pool)
+        .await;
+        
+        // Broadcast the new product to all connected WebSocket clients
+        let _ = app_state.product_tx.send(new_product);
+        
         println!("Generated a new product.");
         sleep(Duration::from_secs(3)).await;
     }
@@ -131,8 +142,15 @@ async fn product_ws(
     let product_rx = app_state.product_tx.subscribe();
     let ws = ProductWs { product_rx };
     
-    // Send initial products
-    let products = app_state.products.lock().unwrap().clone();
+    // Send initial products from database
+    let products = sqlx::query_as!(
+        Product,
+        r#"SELECT id, name, price, image, description, category FROM products"#
+    )
+    .fetch_all(&app_state.db_pool)
+    .await
+    .unwrap_or_else(|_| vec![]);
+    
     let _initial_msg = ws::Message::Text(ByteString::from(serde_json::to_string(&products).unwrap()));
     
     let resp = ws::start(ws, &req, stream)?;
@@ -160,7 +178,23 @@ async fn toggle_generation(
 }
 
 async fn get_products(data: web::Data<AppState>, query: web::Query<ProductQuery>) -> impl Responder {
-    let products = data.products.lock().unwrap();
+    let products = sqlx::query!(
+        r#"SELECT id, name, price, image, description, category FROM products"#
+    )
+    .fetch_all(&data.db_pool)
+    .await
+    .unwrap_or_else(|_| vec![])
+    .into_iter()
+    .map(|row| Product {
+        id: row.id,
+        name: row.name,
+        price: row.price,
+        image: row.image,
+        description: row.description,
+        category: row.category,
+    })
+    .collect::<Vec<_>>();
+
     let filtered_products = filter_and_sort_products(&products, &query);
 
     // Apply pagination using offset and limit
@@ -179,12 +213,30 @@ async fn get_products(data: web::Data<AppState>, query: web::Query<ProductQuery>
 
 async fn get_product(data: web::Data<AppState>, id: web::Path<i32>) -> impl Responder {
     let product_id = id.into_inner();
-    let products = data.products.lock().unwrap();
-    if let Some(product) = products.iter().find(|p| p.id == product_id) {
-        HttpResponse::Ok().json(product)
-    } else {
-        HttpResponse::NotFound().json(serde_json::json!({
+    
+    match sqlx::query!(
+        r#"SELECT id, name, price, image, description, category FROM products WHERE id = ?"#,
+        product_id
+    )
+    .fetch_optional(&data.db_pool)
+    .await
+    {
+        Ok(Some(row)) => {
+            let product = Product {
+                id: row.id,
+                name: row.name,
+                price: row.price,
+                image: row.image,
+                description: row.description,
+                category: row.category,
+            };
+            HttpResponse::Ok().json(product)
+        },
+        Ok(None) => HttpResponse::NotFound().json(serde_json::json!({
             "error": "Product not found"
+        })),
+        Err(_) => HttpResponse::InternalServerError().json(serde_json::json!({
+            "error": "Database error"
         }))
     }
 }
@@ -196,17 +248,36 @@ async fn create_product(
     if let Err(e) = validation::validate_product(&product) {
         return e.error_response();
     }
-    let mut products = data.products.lock().unwrap();
-    let new_product = Product {
-        id: products.iter().map(|p| p.id).max().unwrap_or(0) + 1,
-        name: product.name.clone(),
-        price: product.price,
-        image: product.image.clone(),
-        description: product.description.clone(),
-        category: product.category.clone(),
-    };
-    products.push(new_product.clone());
-    HttpResponse::Created().json(new_product)
+
+    match sqlx::query!(
+        r#"
+        INSERT INTO products (name, price, image, description, category)
+        VALUES (?, ?, ?, ?, ?)
+        "#,
+        product.name,
+        product.price,
+        product.image,
+        product.description,
+        product.category
+    )
+    .execute(&data.db_pool)
+    .await
+    {
+        Ok(result) => {
+            let new_product = Product {
+                id: result.last_insert_rowid(),
+                name: product.name.clone(),
+                price: product.price,
+                image: product.image.clone(),
+                description: product.description.clone(),
+                category: Some(product.category.clone()),
+            };
+            HttpResponse::Created().json(new_product)
+        },
+        Err(_) => HttpResponse::InternalServerError().json(serde_json::json!({
+            "error": "Failed to create product"
+        }))
+    }
 }
 
 async fn update_product(
@@ -215,28 +286,59 @@ async fn update_product(
     product: web::Json<Product>,
 ) -> impl Responder {
     let product_id = id.into_inner();
-    let mut products = data.products.lock().unwrap();
-    if let Some(index) = products.iter().position(|p| p.id == product_id) {
-        let mut updated_product = product.into_inner();
-        updated_product.id = product_id; // Ensure ID matches
-        products[index] = updated_product.clone();
-        HttpResponse::Ok().json(updated_product)
-    } else {
-        HttpResponse::NotFound().json(serde_json::json!({
-            "error": "Product not found"
+    
+    match sqlx::query!(
+        r#"
+        UPDATE products
+        SET name = ?, price = ?, image = ?, description = ?, category = ?
+        WHERE id = ?
+        "#,
+        product.name,
+        product.price,
+        product.image,
+        product.description,
+        product.category,
+        product_id
+    )
+    .execute(&data.db_pool)
+    .await
+    {
+        Ok(result) => {
+            if result.rows_affected() > 0 {
+                HttpResponse::Ok().json(product.into_inner())
+            } else {
+                HttpResponse::NotFound().json(serde_json::json!({
+                    "error": "Product not found"
+                }))
+            }
+        },
+        Err(_) => HttpResponse::InternalServerError().json(serde_json::json!({
+            "error": "Failed to update product"
         }))
     }
 }
 
 async fn delete_product(data: web::Data<AppState>, id: web::Path<i32>) -> impl Responder {
     let product_id = id.into_inner();
-    let mut products = data.products.lock().unwrap();
-    if let Some(index) = products.iter().position(|p| p.id == product_id) {
-        products.remove(index);
-        HttpResponse::NoContent().finish()
-    } else {
-        HttpResponse::NotFound().json(serde_json::json!({
-            "error": "Product not found"
+    
+    match sqlx::query!(
+        r#"DELETE FROM products WHERE id = ?"#,
+        product_id
+    )
+    .execute(&data.db_pool)
+    .await
+    {
+        Ok(result) => {
+            if result.rows_affected() > 0 {
+                HttpResponse::NoContent().finish()
+            } else {
+                HttpResponse::NotFound().json(serde_json::json!({
+                    "error": "Product not found"
+                }))
+            }
+        },
+        Err(_) => HttpResponse::InternalServerError().json(serde_json::json!({
+            "error": "Failed to delete product"
         }))
     }
 }
@@ -252,7 +354,7 @@ fn filter_and_sort_products(products: &[Product], query: &ProductQuery) -> Vec<P
 
     // Apply filters
     if let Some(category) = &query.category {
-        filtered.retain(|p| p.category == *category);
+        filtered.retain(|p| p.category.as_ref().map_or(false, |c| c == category));
     }
 
     if let Some(min_price) = query.min_price {
@@ -273,8 +375,8 @@ fn filter_and_sort_products(products: &[Product], query: &ProductQuery) -> Vec<P
         let search_term = search_term.to_lowercase();
         filtered.retain(|p| {
             p.name.to_lowercase().contains(&search_term) ||
-            p.description.to_lowercase().contains(&search_term) ||
-            p.category.to_lowercase().contains(&search_term)
+            p.description.as_ref().map_or(false, |d| d.to_lowercase().contains(&search_term)) ||
+            p.category.as_ref().map_or(false, |c| c.to_lowercase().contains(&search_term))
         });
     }
 
@@ -286,7 +388,7 @@ fn filter_and_sort_products(products: &[Product], query: &ProductQuery) -> Vec<P
             let comparison = match sort_by.as_str() {
                 "name" => a.name.cmp(&b.name),
                 "price" => a.price.partial_cmp(&b.price).unwrap_or(std::cmp::Ordering::Equal),
-                "category" => a.category.cmp(&b.category),
+                "category" => a.category.as_ref().unwrap_or(&String::new()).cmp(&b.category.as_ref().unwrap_or(&String::new())),
                 _ => std::cmp::Ordering::Equal,
             };
             if sort_order == "desc" {
@@ -300,7 +402,6 @@ fn filter_and_sort_products(products: &[Product], query: &ProductQuery) -> Vec<P
     filtered
 }
 
-
 async fn upload_file(mut payload: Multipart) -> impl Responder {
     // Create uploads directory if it doesn't exist
     let upload_dir = Path::new("uploads");
@@ -313,7 +414,6 @@ async fn upload_file(mut payload: Multipart) -> impl Responder {
     }
 
     let mut filename = String::new();
-    let mut file_path = PathBuf::new();
 
     while let Some(item) = payload.next().await {
         let mut field = match item {
@@ -327,7 +427,7 @@ async fn upload_file(mut payload: Multipart) -> impl Responder {
 
         let content_disposition = field.content_disposition();
         filename = content_disposition.get_filename().unwrap_or("unknown").to_string();
-        file_path = upload_dir.join(&filename);
+        let file_path = upload_dir.join(&filename);
 
         let mut file = match fs::File::create(&file_path) {
             Ok(file) => file,
@@ -449,12 +549,27 @@ async fn health_check() -> impl Responder {
 
 #[actix_web::main]
 async fn main() -> std::io::Result<()> {
-    // Initialize the app state with mock data and WebSocket channel
+    // Load environment variables
+    dotenv().ok();
+    
+    // Get the current directory and create absolute path for database
+    let current_dir = std::env::current_dir().expect("Failed to get current directory");
+    let db_path = current_dir.join("products.db");
+    let database_url = format!("sqlite:{}", db_path.display());
+
+    // Initialize database connection
+    let db_pool = SqlitePoolOptions::new()
+        .max_connections(5)
+        .connect(&database_url)
+        .await
+        .expect("Failed to create pool.");
+
+    // Initialize the app state with WebSocket channel and database pool
     let (product_tx, _) = broadcast::channel(100);
     let app_state = web::Data::new(AppState {
-        products: Mutex::new(mock_data::init_mock_data()),
         is_generating: Arc::new(AtomicBool::new(false)),
         product_tx,
+        db_pool,
     });
 
     println!("Server running at http://localhost:3001");
