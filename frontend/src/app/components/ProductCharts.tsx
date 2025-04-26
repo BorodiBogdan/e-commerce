@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useRef } from "react";
-import { Product } from "../../services/productService";
+import { Product } from "@/types";
 
 interface ChartData {
   labels: string[];

@@ -10,6 +10,12 @@ export default function Navbar() {
       <Link href="/" className="text-xl font-bold">
         BobShop
       </Link>
+      <Link
+        href="/admin-view"
+        className="px-4 py-2 bg-white text-blue-500 font-semibold rounded shadow hover:bg-gray-100"
+      >
+        Admin Panel
+      </Link>
     </nav>
   );
 }

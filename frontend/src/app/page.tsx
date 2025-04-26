@@ -7,8 +7,10 @@ import ProductCard from "./components/ProductCard";
 import ProductForm from "./components/ProductForm";
 import ProductCharts from "./components/ProductCharts";
 import StatusIndicator from "../components/StatusIndicator";
-import FileUpload from "../components/FileUpload";
 import { FileManager } from "../components/FileManager";
+import Toast from "./components/Toast";
+import { ProductFiltersComponent } from "./components/ProductFilters";
+import WebSocketService from "../services/websocketService";
 
 export default function Home() {
   const [products, setProducts] = useState<Product[]>([]);
@@ -25,6 +27,9 @@ export default function Home() {
   );
   const loadingRef = useRef(false);
   const containerRef = useRef<HTMLDivElement>(null);
+  const [toastMessage, setToastMessage] = useState<string>("");
+  const [showToast, setShowToast] = useState(false);
+  const [isGenerating, setIsGenerating] = useState(false);
 
   const productService = ProductService.getInstance();
 
@@ -107,85 +112,134 @@ export default function Home() {
     loadProducts(0, true);
   }, [filters, loadProducts]);
 
-  const statistics = useMemo(() => {
-    if (products.length === 0) return null;
+  const showNotification = useCallback((message: string) => {
+    setToastMessage(message);
+    setShowToast(true);
+    setTimeout(() => setShowToast(false), 3000);
+  }, []);
 
-    const prices = products.map((p) => p.price);
-    const maxPrice = Math.max(...prices);
-    const minPrice = Math.min(...prices);
-    const avgPrice =
-      prices.reduce((sum, price) => sum + price, 0) / prices.length;
-
-    return {
-      maxPrice,
-      minPrice,
-      avgPrice,
-      maxPriceProduct: products.find((p) => p.price === maxPrice)?.id,
-      minPriceProduct: products.find((p) => p.price === minPrice)?.id,
-      avgPriceProduct: products.reduce((closest, product) => {
-        return Math.abs(product.price - avgPrice) <
-          Math.abs(closest.price - avgPrice)
-          ? product
-          : closest;
-      }, products[0]).id,
-    };
-  }, [products]);
-
-  const handleCreateProduct = async (product: Omit<Product, "id">) => {
-    try {
-      setError(null);
-      const newProduct = await productService.createProduct(product);
-      setProducts((prev) => [newProduct, ...prev]);
-      setShowForm(false);
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "Failed to create product");
-    }
-  };
-
-  const handleUpdateProduct = async (
-    product: Omit<Product, "id"> & { id?: number }
-  ) => {
-    try {
-      setError(null);
-      if (!editingProduct?.id) {
-        throw new Error("Product ID is required for update");
+  const handleCreateProduct = useCallback(
+    async (product: Omit<Product, "id">) => {
+      try {
+        setError(null);
+        const newProduct = await productService.createProduct(product);
+        setProducts((prev) => [newProduct, ...prev]);
+        setShowForm(false);
+        showNotification("Product created successfully");
+      } catch (err) {
+        setError(
+          err instanceof Error ? err.message : "Failed to create product"
+        );
       }
-      const updatedProduct = await productService.updateProduct({
-        ...product,
-        id: editingProduct.id,
-      });
-      setProducts((prev) =>
-        prev.map((p) => (p.id === updatedProduct.id ? updatedProduct : p))
-      );
-      setShowForm(false);
-      setEditingProduct(null);
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "Failed to update product");
-    }
-  };
+    },
+    [showNotification]
+  );
 
-  const handleDeleteProduct = async (id: number) => {
+  const handleUpdateProduct = useCallback(
+    async (product: Omit<Product, "id"> & { id?: number }) => {
+      try {
+        setError(null);
+        if (!editingProduct?.id) {
+          throw new Error("Product ID is required for update");
+        }
+        const updatedProduct = await productService.updateProduct({
+          ...product,
+          id: editingProduct.id,
+        });
+        setProducts((prev) =>
+          prev.map((p) => (p.id === updatedProduct.id ? updatedProduct : p))
+        );
+        setShowForm(false);
+        setEditingProduct(null);
+        showNotification("Product updated successfully");
+      } catch (err) {
+        setError(
+          err instanceof Error ? err.message : "Failed to update product"
+        );
+      }
+    },
+    [editingProduct, showNotification]
+  );
+
+  const handleDeleteProduct = useCallback(
+    async (id: number) => {
+      try {
+        setError(null);
+        await productService.deleteProduct(id);
+        setProducts((prev) => prev.filter((p) => p.id !== id));
+        showNotification("Product deleted successfully");
+      } catch (err) {
+        setError(
+          err instanceof Error ? err.message : "Failed to delete product"
+        );
+      }
+    },
+    [showNotification]
+  );
+
+  // Extract unique categories from all products
+  const categories = useMemo(() => {
+    const uniqueCategories = new Set<string>();
+    allProducts.forEach((product) => {
+      if (product.category) {
+        uniqueCategories.add(product.category);
+      }
+    });
+    return Array.from(uniqueCategories).sort();
+  }, [allProducts]);
+
+  const handleFiltersChange = useCallback((newFilters: ProductFilters) => {
+    setFilters(newFilters);
+    setPage(0); // Reset pagination when filters change
+  }, []);
+
+  // Initialize WebSocket connection
+  useEffect(() => {
+    const wsService = WebSocketService.getInstance();
+    wsService.connect();
+
+    const handleNewProduct = (product: Product) => {
+      setProducts((prevProducts) => [...prevProducts, product]);
+      showNotification(`New product added: ${product.name}`);
+    };
+
+    wsService.addListener(handleNewProduct);
+
+    return () => {
+      wsService.removeListener(handleNewProduct);
+      wsService.disconnect();
+    };
+  }, []);
+
+  // Toggle product generation
+  const toggleGeneration = async () => {
     try {
-      setError(null);
-      await productService.deleteProduct(id);
-      setProducts((prev) => prev.filter((p) => p.id !== id));
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "Failed to delete product");
-    }
-  };
+      const response = await fetch(
+        "http://localhost:3001/api/toggle-generation",
+        {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify(!isGenerating),
+        }
+      );
 
-  const handleEditProduct = (id: number) => {
-    const product = products.find((p) => p.id === id);
-    if (product) {
-      setEditingProduct(product);
-      setShowForm(true);
-      setValidationErrors([]);
+      if (response.ok) {
+        setIsGenerating(!isGenerating);
+        showNotification(
+          `Product generation ${!isGenerating ? "started" : "stopped"}`
+        );
+      }
+    } catch (error) {
+      console.error("Error toggling product generation:", error);
     }
   };
 
   return (
     <div className="container mx-auto px-4 py-8">
       <StatusIndicator />
+      <Toast message={toastMessage} isVisible={showToast} />
       <h1 className="text-3xl font-bold mb-8">Product Management</h1>
 
       {error && (
@@ -204,15 +258,23 @@ export default function Home() {
         >
           Add New Product
         </button>
-        <FileUpload
-          onUploadSuccess={() => {
-            setError(null);
-          }}
-          onUploadError={(error) => {
-            setError(error);
-          }}
-        />
+        <button
+          onClick={toggleGeneration}
+          className={`px-4 py-2 rounded ${
+            isGenerating
+              ? "bg-red-500 hover:bg-red-600"
+              : "bg-green-500 hover:bg-green-600"
+          } text-white`}
+        >
+          {isGenerating ? "Stop Generation" : "Start Generation"}
+        </button>
       </div>
+
+      <ProductFiltersComponent
+        filters={filters}
+        onFiltersChange={handleFiltersChange}
+        categories={categories}
+      />
 
       {showForm && (
         <div className="bg-white p-6 rounded-lg shadow-md mb-8">
@@ -247,39 +309,31 @@ export default function Home() {
           <div className="text-gray-600">Loading products...</div>
         </div>
       ) : (
-        <>
-          <ProductCharts products={allProducts} />
-
-          <div className="mt-8">
-            <div ref={containerRef} className="h-[600px] overflow-y-auto">
-              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-                {products.map((product) => (
-                  <div key={product.id}>
-                    <ProductCard
-                      product={product}
-                      onDelete={handleDeleteProduct}
-                      onEdit={() => {
-                        setEditingProduct(product);
-                        setShowForm(true);
-                      }}
-                    />
-                  </div>
-                ))}
-              </div>
-
-              {loading && products.length > 0 && (
-                <div className="flex justify-center items-center h-20">
-                  <div className="text-gray-600">Loading more products...</div>
+        <div className="mt-8">
+          <div ref={containerRef} className="h-[600px] overflow-y-auto">
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+              {products.map((product) => (
+                <div key={product.id}>
+                  <ProductCard
+                    product={product}
+                    onDelete={handleDeleteProduct}
+                    onEdit={() => {
+                      setEditingProduct(product);
+                      setShowForm(true);
+                    }}
+                  />
                 </div>
-              )}
+              ))}
             </div>
-          </div>
-        </>
-      )}
 
-      <div className="container mx-auto px-4 py-8">
-        <FileManager />
-      </div>
+            {loading && products.length > 0 && (
+              <div className="flex justify-center items-center h-20">
+                <div className="text-gray-600">Loading more products...</div>
+              </div>
+            )}
+          </div>
+        </div>
+      )}
     </div>
   );
 }
